@@ -1,4 +1,4 @@
-from probzip.probzip import *
+from bengalese_finch.models.probzip import *
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
@@ -14,8 +14,8 @@ for alpha in alphas:
     print(f'alpha: {alpha}')
     compressor = ProbZip(alpha=alpha)
     compressor.compress_dataset(dataset=dataset_train, steps=1000)
-    likelihood_train = compressor.get_dataset_likelihood(dataset_test)
-    likelihood_test = compressor.get_dataset_likelihood(dataset_test)
+    likelihood_train = compressor.get_dataset_ll(dataset_test)
+    likelihood_test = compressor.get_dataset_ll(dataset_test)
     likelihoods_train.append(likelihood_train)
     likelihoods_test.append(likelihood_test)
 

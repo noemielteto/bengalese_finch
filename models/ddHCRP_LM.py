@@ -18,7 +18,7 @@ import itertools
 #np.set_printoptions(suppress=True)
 sns.set(style="white",context='paper',font_scale=2)
 
-from utils import *
+from bengalese_finch.models.utils import *
 
 
 class HCRP_LM():

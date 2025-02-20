@@ -1,5 +1,4 @@
-from func import *
-from probzip.probzip import *
+from bengalese_finch.models.probzip import *
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
