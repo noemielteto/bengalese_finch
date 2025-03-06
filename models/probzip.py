@@ -33,29 +33,47 @@ def get_expression(parent=None, prefix=None, suffix=None, rate=None):
 
         affix = prefix if prefix is not None else suffix
 
-        if parent.is_emptystring():
-            assert isinstance(affix, (str, type(None))), "Terminal nodes should have epsilon empty string as their parent."
+        if parent.is_emptystring() and isinstance(affix, str):
             expression = affix
 
-        else:
+        elif parent.is_emptystring() and isinstance(affix, Node):
+            expression = affix.expression
 
-            if prefix is not None:
-
-                a = f"'{prefix.expression}'" if prefix.type == 'terminal' else prefix.expression
-                b = f"'{parent.expression}'" if parent.type == 'terminal' else parent.expression
-                expression  = f'[{a}, {b}]'
-
-            elif suffix is not None:
-
-                a = f"'{parent.expression}'" if parent.type == 'terminal' else parent.expression
-                b = f"'{suffix.expression}'" if suffix.type == 'terminal' else suffix.expression
-                expression = f'[{a}, {b}]'
+        elif affix is not None:
+            if affix.is_emptystring() and isinstance(parent, Node):
+                expression = parent.expression
 
             else:
-                if parent.type=='terminal':
-                    expression = f'{[parent.expression]}*{rate}'
-                else:
-                    expression = f'{parent.expression}*{rate}'
+                if prefix is not None:
+                    if isinstance(prefix, str):
+                        a = prefix
+                    else:
+                        a = f"'{prefix.expression}'" if prefix.type == 'terminal' else prefix.expression
+
+                    if isinstance(parent, str):
+                        b = parent
+                    else:
+                        b = f"'{parent.expression}'" if parent.type == 'terminal' else parent.expression
+                    expression  = f'[{a}, {b}]'
+
+                elif suffix is not None:
+
+                    if isinstance(suffix, str):
+                        a = suffix
+                    else:
+                        a = f"'{suffix.expression}'" if suffix.type == 'terminal' else suffix.expression
+
+                    if isinstance(parent, str):
+                        b = parent
+                    else:
+                        b = f"'{parent.expression}'" if parent.type == 'terminal' else parent.expression
+                    expression  = f'[{b}, {a}]'
+
+        else:
+            if parent.type=='terminal':
+                expression = f'{[parent.expression]}*{rate}'
+            else:
+                expression = f'{parent.expression}*{rate}'
     
     return expression
 
@@ -69,17 +87,26 @@ def get_flat_expression(parent=None, prefix=None, suffix=None, rate=None):
         assert sum(x is not None for x in [prefix, suffix, rate]) == 1, "Exactly one of prefix, suffix, or rate must be defined."
         affix = prefix if prefix is not None else suffix
 
-        if parent.is_emptystring():
-            assert isinstance(affix, (str, type(None))), "Terminal nodes should have epsilon empty string as their parent."
-            flat_expression = affix
+        # TODO(noemielteto) remove this and above when clear on what to do with empty strings
+        if False:
+            pass
+        # if parent.is_emptystring():
+        #     assert isinstance(affix, (str, type(None))), "Terminal nodes should have epsilon empty string as their parent."
+        #     flat_expression = affix
 
         else:
 
             if prefix is not None:
-                flat_expression  = prefix.flat_expression + parent.flat_expression
+                if isinstance(prefix, str):
+                    flat_expression  = prefix + parent.flat_expression
+                else:
+                    flat_expression  = prefix.flat_expression + parent.flat_expression
 
             elif suffix is not None:
-                flat_expression  = parent.flat_expression + suffix.flat_expression
+                if isinstance(suffix, str):
+                    flat_expression  = parent.flat_expression + suffix
+                else:
+                    flat_expression  = parent.flat_expression + suffix.flat_expression
 
             else:
                 if parent.type=='terminal':
@@ -91,9 +118,8 @@ def get_flat_expression(parent=None, prefix=None, suffix=None, rate=None):
 
 class Node:
 
-    def __init__(self, alpha, parent=None, prefix=None, suffix=None, affix=None, rate=None):
+    def __init__(self, alpha_vector, parent=None, prefix=None, suffix=None, affix=None, rate=None):
 
-        self.alpha          = alpha
         self.parent         = parent
         self.prefix         = prefix
         self.suffix         = suffix
@@ -102,11 +128,21 @@ class Node:
         self.children       = []
         self.count          = 1
 
-        if parent is None or parent.is_emptystring():
+        if parent is None:
             self.type            = 'terminal'
+            self.order           = 0        
+        elif parent.is_emptystring():
+            self.type            = 'terminal'
+            self.order           = 1
         else:
             self.type            = 'nonterminal'
-            
+            if rate is None:
+                self.order           = parent.order + suffix.order
+            else:
+                self.order           = parent.order + 1
+
+        self.alpha = alpha_vector[self.order]
+
         self.expression = get_expression(parent=parent, prefix=prefix, suffix=suffix, rate=rate)
         self.flat_expression = get_flat_expression(parent=parent, prefix=prefix, suffix=suffix, rate=rate)
 
@@ -137,27 +173,11 @@ class Node:
 
                 return self.parent.flat_expression * rate
 
-    # TODO(noemielteto): Remove in case we indeed only need to compute the likelihood of the data under the most likely 
-    # def get_likely_completions(self, child, p_threshold=0.05):
-
-    #     # return the empty string or the terminal
-    #     if self == self.compressor.epsilon or self.parent == self.compressor.epsilon:
-    #         return [self.expression]
-
-    #     elif self.rate == None:
-    #         return [self.affix.flat_expression]
-
-    #     else:
-    #         rates = np.array(range(2,16))
-    #         pmf = poisson.pmf(rates, self.rate)
-    #         likely_rates = rates[np.where(pmf>p_threshold)]
-    #         return [self.expand(r) for r in likely_rates]
-
     def get_observed_repeat(self, data, i):
 
         observed_repeat = 0
         if self.flat_expression == '':
-            return observed_repeat, i
+            return observed_repeat
         string = self.flat_expression * (observed_repeat+1)
         while string == data[i:i+len(string)]:
             observed_repeat += 1
@@ -178,7 +198,12 @@ class Node:
         
             else:
                 # Get completion of empty string, terminal or nonterminal
-                if child.expression == '' or child.parent.expression == '' or child.affix is None:
+                # TODO: remove this when clear
+                # if child.expression == '' or child.parent.expression == '' or child.affix is None:
+                #     completion = child.expression
+                if child.type == 'terminal':
+                    completion = child.flat_expression
+                elif child.affix is None:
                     completion = child.expression
                 else:
                     completion = child.affix.flat_expression
@@ -205,8 +230,8 @@ class Node:
     def get_shift(self, data, i):
 
         if self.rate is not None:
-            observed_repeat = self.get_observed_repeat(data, i)
-            shift = len(self.expand(rate=(observed_repeat+1)))-1
+            observed_repeat = self.parent.get_observed_repeat(data, i)
+            shift = len(self.expand(rate=observed_repeat+1))-1
         else:
             if self.type == 'terminal':
                 shift = len(self.flat_expression)
@@ -214,12 +239,16 @@ class Node:
                 shift = len(self.affix.flat_expression)
         return shift
 
-    def update(self, data, i):
+    def infer(self, data, i, update_counts=True):
 
         children = self.get_candidate_children(data, i)
 
+        # print('---------------------------------------')
+        # print('Candidate children:', children)
+
         # no candidates -> stay
         if not len(children):
+            # print('No candidates. Staying.')
             return self, i
 
         counts      = np.array([child.count for child in children])
@@ -230,45 +259,27 @@ class Node:
         norm        = N + alpha
         prob_stay   = alpha/norm
 
-        # We never infer the empty string because we have to move it at least one character to parse
-        # TODO(noemielteto) Consider removing this and let the algorithm decide whether to stay or not?
+        # NOTE: There is a decision here on whether we allow inferring empty string or not.
         if (np.random.random() < prob_stay) and (self.expression != ''):
-            self.count += 1
+        # if (np.random.random() < prob_stay):
+            # print('Probabilistically staying.')
+            if update_counts:
+                self.count += 1
             return self, i
 
         else:
             N_children = counts.sum()
             norm_children = N_children
             probs_seat = counts / norm_children
+            # print('Probs seat:', probs_seat)
             # print(f'N: {N}, alpha: {alpha}, norm: {norm}, prob_stay: {prob_stay}, probs: {probs}')
             child = np.random.choice(children, p=probs_seat)
+            # print('Selected child:', child)
             shift = child.get_shift(data, i)
 
-            child, i = child.update(data, i+shift)
+            child, i = child.infer(data=data, i=i+shift, update_counts=update_counts)
 
         return child, i
-
-    # def infer(self, data, i):
-
-    #     if i>=len(data):
-    #         return self
-
-    #     children = self.get_candidate_children(data, i)
-
-    #     # no candidates -> stay
-    #     if not len(children):
-    #         return self, i
-
-    #     else:
-    #         counts  = np.array([child.count for child in children])
-    #         weights = self.get_poisson_weights(data, i, children)
-    #         counts = counts * weights
-    #         # Instead of sampling, get the most likely child
-    #         child  = children[np.argmax(counts)]
-    #         shift = child.get_shift(data, i)
-    #         child, i = child.infer(data, i+shift)
-
-    #     return child, i
 
     def probability_compress(self, data, i):
         
@@ -282,7 +293,8 @@ class Node:
             weights     = self.get_poisson_weights(data, i, siblings)
             counts      = counts * weights
             N        = counts.sum()
-            norm     = N + self.alpha
+            alpha    = self.alpha
+            norm     = N + alpha
         
             if self.parent.expression == '':
                 prob = (self.count / norm)
@@ -313,12 +325,22 @@ class Node:
 
         return prob_compress * prob_not_compress
 
+    def get_predictive_distr(self):
+        
+        counts   = np.array([child.count for child in self.children])
+        N        = counts.sum()
+        alpha    = self.alpha
+        norm     = N + alpha
+
+        distr = list(counts/norm) + [alpha/norm]
+
+        return np.array(distr)
 
 class ProbZip:
 
-    def __init__(self, alpha=1):
-        self.alpha                  = alpha
-        self.epsilon                = Node(alpha=self.alpha)
+    def __init__(self, alpha_vector):
+        self.alpha_vector           = alpha_vector
+        self.epsilon                = Node(alpha_vector=alpha_vector)
         self.library                = {'': self.epsilon}
 
     def __repr__(self):
@@ -336,11 +358,11 @@ class ProbZip:
 
     def get_terminals(self, data):
 
-        # memoize terminals
+        data = flatten_arbitrarily_nested_lists(data)
         terminals = set(data)
         self.n_terminals = len(terminals)
         for terminal in terminals:
-            node = Node(alpha=self.alpha, parent=self.epsilon, suffix=terminal)
+            node = Node(alpha_vector=self.alpha_vector, parent=self.epsilon, suffix=terminal)
             self.library[terminal] = node
 
     def get_important_library(self, threshold=.95):
@@ -354,11 +376,139 @@ class ProbZip:
             i += 1
 
         return important_library
-
-    def compress(self, data):
+    
+    def compress_chain(self, data, update_counts=True):
 
         i = 0
-        parent, i = self.epsilon.update(data, i)
+
+        # Several steps
+        while i<len(data):
+
+            parent, i = self.epsilon.infer(data, i)
+  
+            observed_repeat = parent.get_observed_repeat(data, i)
+            if observed_repeat:
+                rate = observed_repeat + 1
+                suffix = None
+                i += len(parent.flat_expression) * observed_repeat
+            else:
+                suffix, i = self.epsilon.infer(data, i)
+                rate = None
+            
+            expression = get_expression(parent=parent, suffix=suffix, rate=rate)
+
+            if expression in self.library.keys():
+                child = self.library[expression]
+            elif expression in [c.expression for c in parent.children]:
+                c_i = 0
+                while parent.children[c_i].expression != expression:
+                    c_i += 1
+                child = parent.children[c_i]
+            else:
+                child = Node(alpha_vector=self.alpha_vector, parent=parent, suffix=suffix, rate=rate)
+
+            if update_counts:
+                norm = parent.alpha + child.count
+                prob_stay = parent.alpha/norm
+
+                # Note: We prevent the creation of overlapping nonterminals here: if its parent
+                # or affix is already in the library, we don't memoize it. If its suffix is parent
+                # in the library, we don't memoize it.
+                if np.random.random() > prob_stay and not len(self.get_nonterminal_overlaps(child)) and child.order<7:
+
+                    # We only memoize non-reduntant expressions
+                    if child.flat_expression not in [node.flat_expression for node in self.library.values()]:
+
+                        # Memoize in library
+                        if expression in self.library.keys():
+                            child.count += 1
+                        else: 
+                            print('Memoizing expression:', expression)
+                            self.library[expression] = child
+
+                    else:
+                        del child
+                
+                else:
+                    del child
+                
+            else:
+                del child
+        
+        return None
+
+    # TODO: unify compress and compress_onestep
+    def compress_onestep(self, data, update_counts=True):
+
+        i = 0
+
+        # Step 0
+        parent, i = self.epsilon.infer(data, i)
+
+        # Step 1 (only if there is more to infer)
+        if i<(len(data)-1):
+  
+            observed_repeat = parent.get_observed_repeat(data, i)
+            if observed_repeat:
+                rate = observed_repeat + 1
+                suffix = None
+            else:
+                suffix, i = self.epsilon.infer(data, i)
+                rate = None
+            
+            # print(f'Parent: {parent}, Suffix: {suffix}, Rate: {rate}')
+            expression = get_expression(parent=parent, suffix=suffix, rate=rate)
+
+            # TODO(noemielteto): rewrite this in terms of infer()
+
+            if expression in self.library.keys():
+                child = self.library[expression]
+            elif expression in [c.expression for c in parent.children]:
+                c_i = 0
+                while parent.children[c_i].expression != expression:
+                    c_i += 1
+                child = parent.children[c_i]
+            else:
+                child = Node(alpha_vector=self.alpha_vector, parent=parent, suffix=suffix, rate=rate)
+
+            if update_counts:
+                norm = parent.alpha + child.count
+                prob_stay = parent.alpha/norm
+
+                # Note: We prevent the creation of overlapping nonterminals here: if its parent
+                # or affix is already in the library, we don't memoize it. If its suffix is parent
+                # in the library, we don't memoize it.
+                if np.random.random() > prob_stay and not len(self.get_nonterminal_overlaps(child)) and child.order<7:
+
+                    # We only memoize non-reduntant expressions
+                    if child.flat_expression not in [node.flat_expression for node in self.library.values()]:
+
+                        # Memoize in library
+                        if expression in self.library.keys():
+                            child.count += 1
+                        else: 
+                            print('Memoizing expression:', expression)
+                            self.library[expression] = child
+
+                        parent = child
+
+                    else:
+                        del child
+                
+                else:
+                    del child
+                
+            else:
+                del child
+        
+        return parent
+
+    def compress(self, data, update_counts=False):
+
+        children_created = []
+
+        i = 0
+        parent, i = self.epsilon.infer(data, i, update_counts=False)
         while i<len(data):
             
             observed_repeat = parent.get_observed_repeat(data, i)
@@ -366,62 +516,114 @@ class ProbZip:
                 rate = observed_repeat + 1
                 suffix = None
             else:
-                suffix, i = self.epsilon.update(data, i)
+                suffix, i = self.epsilon.infer(data, i, update_counts=False)
                 rate = None
             
             expression = get_expression(parent=parent, suffix=suffix, rate=rate)
 
+            # TODO(noemielteto): rewrite this in terms of infer()
+
             if expression in self.library.keys():
                 child = self.library[expression]
-                child.count += 1
+            elif expression in [c.expression for c in parent.children]:
+                c_i = 0
+                while parent.children[c_i].expression != expression:
+                    c_i += 1
+                child = parent.children[c_i]
             else:
-                child = Node(alpha=self.alpha, parent=parent, suffix=suffix, rate=rate)
-                self.library[expression] = child
+                child = Node(alpha_vector=self.alpha_vector, parent=parent, suffix=suffix, rate=rate)
 
+            children_created.append(child)
             parent = child
         
-        return parent
+        return parent, children_created
 
-    def get_library_leaves(self):
-        return [node for node in self.library.values() if len(node.children)==0]
+    # def get_library_leaves(self):
+    #     return [node for node in self.library.values() if len(node.children)==0]
     
-    def get_shannon_entropy(self, data):
-        leaves = self.get_library_leaves()
-        leaf_probs = [leaf.probability(data, 0) for leaf in leaves]
+    # def get_shannon_entropy(self, data):
+    #     leaves = self.get_library_leaves()
+    #     leaf_probs = [leaf.probability(data, 0) for leaf in leaves]
+    #     entropy = 0.0
+    #     for p in leaf_probs:
+    #         if p > 0:
+    #             entropy -= p * math.log2(p)
+    #     return entropy
+
+    # def get_dataset_shannon_entropy(self, dataset):
+    #     entropies = [self.get_shannon_entropy(data) for data in dataset]
+    #     return np.mean(entropies)
+
+    def get_shannon_entropy(self):
         entropy = 0.0
-        for p in leaf_probs:
-            if p > 0:
-                entropy -= p * math.log2(p)
+        for node in self.library.values():
+            probs = node.get_predictive_distr()
+            entropy -= np.sum(probs * np.log2(probs))
         return entropy
-    
-    def get_dataset_shannon_entropy(self, dataset):
-        entropies = [self.get_shannon_entropy(data) for data in dataset]
-        return np.mean(entropies)
 
-    # Compress whole bouts; This approach suffers from greedyness
-    # TODO(noemielteto): Remove in case we stick to the random substring approach
-    # def compress_dataset(self, dataset):
-    #     self.get_terminals(flatten_arbitrarily_nested_lists(dataset))
-    #     for song in dataset:
-    #         self.compress(song)
+    def remove_redundant_nodes(self):
+        n_redundant = 0
+        for key1, node1 in self.library.items():
+            for key2, node2 in self.library.items():
+                if key1 != key2:
+                    if node1.flat_expression == node2.flat_expression:
+                        del self.library[key2]
+                        n_redundant += 1
+        return n_redundant
 
-    # Compress random substrings of songs; This approach is more robust
-    def compress_dataset(self, dataset, steps=1000):
-        self.get_terminals(flatten_arbitrarily_nested_lists(dataset))
-        for _ in range(steps):
-            song = np.random.choice(dataset)
-            # random substring of song
-            i, j = sorted(np.random.choice(range(len(song)), 2))
-            if i==j:
-                continue
-            substring = song[i:j]
-            _ = self.compress(substring)
+    def get_nonterminal_overlaps(self, node):
+        overlaps = []
+        for key, other_node in self.library.items():
+            if node.parent == other_node.affix or node.affix == other_node.parent:
+                overlaps.append(other_node)
+        return overlaps
+
+    def compress_dataset(self, dataset_train, dataset_val=None, steps=1000, log_every=100):
+
+        results_dict = {'ll_train': [], 'll_val': [], 'entropy': []}
+        n_train = len(flatten_arbitrarily_nested_lists(dataset_train))
+        n_val = len(flatten_arbitrarily_nested_lists(dataset_val)) if dataset_val is not None else None
+
+        self.get_terminals(dataset_train)
+        for step in range(steps):
+            song = np.random.choice(dataset_train)
+            # random start index in song
+            i = np.random.randint(len(song))
+            # i = 0
+            _ = self.compress_onestep(song[i:])
+            # _ = self.compress_chain(song)
+            # _, _ = self.compress(song)
+
+            if step % log_every == 0:
+
+                ll_train = self.get_dataset_ll(dataset_train)
+                ll_train /= n_train
+                results_dict['ll_train'].append(ll_train)
+                ll_val = None
+
+                entropy = self.get_shannon_entropy()
+                entropy /= n_train
+                results_dict['entropy'].append(entropy)
+
+                if dataset_val is not None:
+                    ll_val = self.get_dataset_ll(dataset_val)
+                    ll_val /= n_val
+                    results_dict['ll_val'].append(ll_val)
+        
+                print(f'Step {step}: normalized ll train: {ll_train}, normalized ll val: {ll_val}, normalized entropy: {entropy}, library size: {len(self.library)}')
+
+        return results_dict
 
     def get_dataset_ll(self, dataset):
         liks = []
         for data in dataset:
-            symbol = self.compress(data)
+            symbol, children_created = self.compress(data)
             liks.append(symbol.probability(data, 0))
+
+            # clean up inferred children!
+            for child in children_created:
+                del child
+            
         return np.sum(np.log((np.array(liks))))
     
 

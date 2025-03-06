@@ -1,7 +1,67 @@
-from probzip.probzip import *
+from bengalese_finch.models.probzip import *
+from sklearn.model_selection import train_test_split
 
 ##############################################################################
-#
+
+# # learn bag of triplets data
+# triplets     = ['abc', 'def', 'ghi', 'jkl', 'mno']
+# dataset       = [''.join(np.random.choice(triplets, 20)) for _ in range(50)]
+
+dataset_allsubjects = get_data(strings=True)
+dataset = dataset_allsubjects['wh09pk88']
+
+compressor  = ProbZip(alpha=0.1)
+dataset_train, dataset_test = train_test_split(dataset, test_size=0.2, random_state=42)
+compressor.compress_dataset(dataset=dataset_train, steps=10000)
+
+compressor.compress(dataset_test[10])
+
+ll_test = compressor.get_dataset_ll(dataset_test)
+print(ll_test)
+
+# compressor  = ProbZip(alpha=.000001)
+# compressor.get_terminals(flatten_arbitrarily_nested_lists(dataset))
+# compressor.library["['n']*2"] = Node(alpha=compressor.alpha, parent=compressor.library['n'], suffix=None, rate=2)
+# compressor.library["['n']*8"] = Node(alpha=compressor.alpha, parent=compressor.library['n'], suffix=None, rate=8)
+# compressor.library["['a', 'b']"] = Node(alpha=compressor.alpha, parent=compressor.library['a'], suffix=compressor.library['b'], rate=None)
+# compressor.library["[['a', 'b'], 'l']"] = Node(alpha=compressor.alpha, parent=compressor.library["['a', 'b']"], suffix=compressor.library['l'], rate=None)
+# compressor.library["[[['a', 'b'], 'l'], 'e']"] = Node(alpha=compressor.alpha, parent=compressor.library["[['a', 'b'], 'l']"], suffix=compressor.library['e'], rate=None)
+# compressor.library["['d', 'g']"] = Node(alpha=compressor.alpha, parent=compressor.library['d'], suffix=compressor.library['g'], rate=None)
+# compressor.library["[['d', 'g'], 'f']"] = Node(alpha=compressor.alpha, parent=compressor.library["['d', 'g']"], suffix=compressor.library['f'], rate=None)
+# compressor.library["[[[['a', 'b'], 'l'], 'e'], [['d', 'g'], 'f']]"] = Node(alpha=compressor.alpha, parent=compressor.library["[[['a', 'b'], 'l'], 'e']"], suffix=compressor.library["[['d', 'g'], 'f']"], rate=None)
+# compressor.library["[[[['a', 'b'], 'l'], 'e'], [['d', 'g'], 'f']]*3"] = Node(alpha=compressor.alpha, parent=compressor.library["[[[['a', 'b'], 'l'], 'e'], [['d', 'g'], 'f']]"], suffix=None, rate=3)
+# compressor.library["[['n']*8, [[[['a', 'b'], 'l'], 'e'], [['d', 'g'], 'f']]*3]"] = Node(alpha=compressor.alpha, parent=compressor.library["['n']*8"], suffix=compressor.library["[[[['a', 'b'], 'l'], 'e'], [['d', 'g'], 'f']]*3"], rate=None)
+# compressor.library["['<', [['n']*8, [[[['a', 'b'], 'l'], 'e'], [['d', 'g'], 'f']]*3]]"] = Node(alpha=compressor.alpha, parent=compressor.library["<"], suffix=compressor.library["[['n']*8, [[[['a', 'b'], 'l'], 'e'], [['d', 'g'], 'f']]*3]"], rate=None)
+
+# compressor.compress(dataset_test[10])
+
+ll_test = compressor.get_dataset_ll(dataset_test)
+print(ll_test)
+# compressor.library
+
+
+print('compression done')
+ll_train = compressor.get_dataset_ll(dataset_train)
+ll_test = compressor.get_dataset_ll(dataset_test)
+print('computed ll')
+entropy_train = compressor.get_dataset_shannon_entropy(dataset_train)
+entropy_test = compressor.get_dataset_shannon_entropy(dataset_test)
+print('computed entropy')
+
+
+print(len(compressor.library))
+print(len(compressor.get_important_library()))
+print(compressor.library['a'].children)
+print([c.count for c in compressor.library['a'].children])
+print(compressor.library['a'].children[0])
+print(compressor.library['b'].children[0])
+print(compressor.library['l'].children[0])
+print(compressor.library['e'].children[0])
+print(compressor.library['d'].children[0])
+print(compressor.library['g'].children[0])
+print(compressor.library['f'].children[0])
+print(compressor.library['n'].children[0])
+
 # compressor  = ProbZip(alpha=1)
 # compressor.get_terminals(['a','b','c','d'])
 # node = Node(alpha=compressor.alpha, parent=compressor.library['a'], suffix=compressor.library['b'])
@@ -130,55 +190,55 @@ from probzip.probzip import *
 #
 # # ############################################################################
 #
-compressor  = ProbZip(alpha=1)
+# compressor  = ProbZip(alpha=1)
 
-dataset = ['<nnnnabledgfabledgfnnfabledgf>',
-        '<nnnnnnabledgfabledgfnnfabledgf>',
-        '<nnnnnabledgfabledgfabledgfnnfabledgf>',
-        '<nnnnnnnnabledgfabledgfablennfabledgfnnfabledgf>',
-        '<nnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgf>',
-        '<nnnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgfnnfabledgf>',
-        '<nnnnnnabledgfabledgfnnfabledgf>',
-        '<nnnnabledgfabledgfnnfabledgf>',
-        '<nnnnnnnabledgfabledgfabledgfnnfabledgf>',
-        '<nnnnnnabledgfabledgfablennfabledgfnnfabledgf>',
-        '<nnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgf>',
-        '<nnnnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgfnnfabledgf>',
-        '<nnnnabledgfabledgfnnfabledgf>',
-        '<nnnnnnabledgfabledgfnnfabledgf>',
-        '<nnnnnabledgfabledgfabledgfnnfabledgf>',
-        '<nnnnnnnnabledgfabledgfablennfabledgfnnfabledgf>',
-        '<nnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgf>',
-        '<nnnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgfnnfabledgf>',
-        '<nnnnnnabledgfabledgfnnfabledgf>',
-        '<nnnnabledgfabledgfnnfabledgf>',
-        '<nnnnnnnabledgfabledgfabledgfnnfabledgf>',
-        '<nnnnnnabledgfabledgfablennfabledgfnnfabledgf>',
-        '<nnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgf>',
-        '<nnnnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgfnnfabledgf>',
-        '<nnnnabledgfabledgfnnfabledgf>',
-        '<nnnnnnabledgfabledgfnnfabledgf>',
-        '<nnnnnabledgfabledgfabledgfnnfabledgf>',
-        '<nnnnnnnnabledgfabledgfablennfabledgfnnfabledgf>',
-        '<nnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgf>',
-        '<nnnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgfnnfabledgf>',
-        '<nnnnnnabledgfabledgfnnfabledgf>',
-        '<nnnnabledgfabledgfnnfabledgf>',
-        '<nnnnnnnabledgfabledgfabledgfnnfabledgf>',
-        '<nnnnnnabledgfabledgfablennfabledgfnnfabledgf>',
-        '<nnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgf>',
-        '<nnnnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgfnnfabledgf>'
-        ]
+# dataset = ['<nnnnabledgfabledgfnnfabledgf>',
+#         '<nnnnnnabledgfabledgfnnfabledgf>',
+#         '<nnnnnabledgfabledgfabledgfnnfabledgf>',
+#         '<nnnnnnnnabledgfabledgfablennfabledgfnnfabledgf>',
+#         '<nnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgf>',
+#         '<nnnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgfnnfabledgf>',
+#         '<nnnnnnabledgfabledgfnnfabledgf>',
+#         '<nnnnabledgfabledgfnnfabledgf>',
+#         '<nnnnnnnabledgfabledgfabledgfnnfabledgf>',
+#         '<nnnnnnabledgfabledgfablennfabledgfnnfabledgf>',
+#         '<nnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgf>',
+#         '<nnnnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgfnnfabledgf>',
+#         '<nnnnabledgfabledgfnnfabledgf>',
+#         '<nnnnnnabledgfabledgfnnfabledgf>',
+#         '<nnnnnabledgfabledgfabledgfnnfabledgf>',
+#         '<nnnnnnnnabledgfabledgfablennfabledgfnnfabledgf>',
+#         '<nnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgf>',
+#         '<nnnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgfnnfabledgf>',
+#         '<nnnnnnabledgfabledgfnnfabledgf>',
+#         '<nnnnabledgfabledgfnnfabledgf>',
+#         '<nnnnnnnabledgfabledgfabledgfnnfabledgf>',
+#         '<nnnnnnabledgfabledgfablennfabledgfnnfabledgf>',
+#         '<nnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgf>',
+#         '<nnnnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgfnnfabledgf>',
+#         '<nnnnabledgfabledgfnnfabledgf>',
+#         '<nnnnnnabledgfabledgfnnfabledgf>',
+#         '<nnnnnabledgfabledgfabledgfnnfabledgf>',
+#         '<nnnnnnnnabledgfabledgfablennfabledgfnnfabledgf>',
+#         '<nnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgf>',
+#         '<nnnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgfnnfabledgf>',
+#         '<nnnnnnabledgfabledgfnnfabledgf>',
+#         '<nnnnabledgfabledgfnnfabledgf>',
+#         '<nnnnnnnabledgfabledgfabledgfnnfabledgf>',
+#         '<nnnnnnabledgfabledgfablennfabledgfnnfabledgf>',
+#         '<nnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgf>',
+#         '<nnnnnnnnnabledgfabledgfabledgfnnfabledgfnnfabledgfnnfabledgf>'
+#         ]
 
-compressor.compress_dataset(dataset)
+# compressor.compress_dataset(dataset)
 
-likelihoods = []
-for alpha in [0.001, 0.1, 1, 10, 100]:
-    print(f'alpha: {alpha}')
-    compressor = ProbZip(alpha=alpha)
-    compressor.compress_dataset(dataset)
-    likelihood = compressor.get_dataset_likelihood(dataset)
-    likelihoods.append(likelihood)
+# likelihoods = []
+# for alpha in [0.001, 0.1, 1, 10, 100]:
+#     print(f'alpha: {alpha}')
+#     compressor = ProbZip(alpha=alpha)
+#     compressor.compress_dataset(dataset)
+#     likelihood = compressor.get_dataset_likelihood(dataset)
+#     likelihoods.append(likelihood)
 
-plt.plot(likelihoods)
-plt.show()
+# plt.plot(likelihoods)
+# plt.show()

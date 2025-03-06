@@ -151,6 +151,34 @@ def get_chunks_from_transition_matrix(M, elements, threshold=0.8):
     return chunks
 
 
+def get_data_lesion(strings=False):
+
+    data_dir = os.path.join(project_root, "data", f"lesion_data")
+
+    data = {}
+    subjects = ['bird1', 'bird2', 'bird3', 'bird4', 'bird5', 'bird6', 'bird7']
+
+    for subject in subjects:
+        data_label = subject
+        data[data_label] = {}
+
+        for phase in ['prelesion', 'postlesion']:
+
+            data[data_label][phase] = []
+
+            file_path = os.path.join(data_dir, f"{subject}_{phase}.txt")
+            with open(file_path) as f:
+                contents = f.read()
+            if strings:
+                for bout in contents.split('Y')[1:-1]:
+                    data[data_label][phase].append('<' + bout + '>')
+            else:
+                for bout in contents.split('Y')[1:-1]:
+                    data[data_label][phase].append(['START'] + list(bout) + ['STOP'])
+    
+    return data
+
+
 def get_data(experimenter='Lena', phase='baseline', strings=False):
 
     data_dir = os.path.join(project_root, "data", f"{phase}_data")
@@ -174,19 +202,23 @@ def get_data(experimenter='Lena', phase='baseline', strings=False):
             if experimenter=='Lena':
                 if strings:
                     for bout in contents.split('Y')[1:-1]:
-                        data[data_label].append('<' + bout + '>')
-                        data[data_label].append(bout)
+                        if len(bout):
+                            # data[data_label].append('<' + bout + '>')
+                            # Note: Removed the <> brackets because they are not necessary for ProbZip! Reconsider if needed.
+                            data[data_label].append(bout)
                 else:
                     for bout in contents.split('Y')[1:-1]:
-                        data[data_label].append(['START'] + list(bout) + ['STOP'])
+                        if len(bout):
+                            data[data_label].append(['START'] + list(bout) + ['STOP'])
             if experimenter=='Simon':
                 if strings:
                     for bout in contents.split('Y')[1:-1]:
-                        data[data_label].append('<' + bout + '>')
-                        data[data_label].append(bout)
+                        if len(bout):
+                            data[data_label].append('<' + bout + '>')
                 else:
                     for bout in contents.split(','):
-                        data[data_label].append(['START'] + list(bout) + ['STOP'])
+                        if len(bout):
+                            data[data_label].append(['START'] + list(bout) + ['STOP'])
 
     elif phase=='post-training':
 
