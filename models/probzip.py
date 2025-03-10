@@ -538,6 +538,90 @@ class ProbZip:
         
         return parent, children_created
 
+    
+    def random_node_to_add(self):
+
+        parent = np.random.choice(list(self.library.values()))
+        # Prior for suffix or rate is .5; Can be hyperparameter
+        if np.random.random() < .5:
+            suffix = np.random.choice(list(self.library.values()))
+            rate = None
+        else:
+            rate = np.random.choice([1, 2, 3, 4, 5])
+            suffix = None
+
+        child = Node(alpha_vector=self.alpha_vector, parent=parent, suffix=suffix, rate=rate)
+
+        return child
+
+    def random_node_to_remove(self):
+
+        # Should we remove leaves only? Or entire subtrees?
+        # node = np.random.choice(list(self.library.values()))
+
+        leaves = [node for node in self.library.values() if len(node.children)==0]
+        node = np.random.choice(leaves)
+        
+        return node
+
+    def search_add_remove(self, dataset_train, dataset_val, steps=1000, log_every=100):
+
+        self.get_terminals(dataset_train)
+        results_dict = {'ll_train': [], 'll_val': [], 'entropy': []}
+
+        for step in range(steps):
+
+            ll_0 = self.get_dataset_ll(dataset_train)
+            node_to_add = self.random_node_to_add()
+            print('Considering adding node:', node_to_add)
+            ll = self.get_dataset_ll(dataset_train)
+            if ll > ll_0:
+                self.library[node_to_add.expression] = node_to_add
+                ll_0 = ll
+                print('Added node:', node_to_add)
+                print('Node order:', node_to_add.order)
+                print('LL:', ll)
+            else:
+                del node_to_add
+            
+            node_to_remove = self.random_node_to_remove()
+            print('Considering removing node:', node_to_remove)
+            child_to_remove = None
+            # This part would be much more straightforward if children was a dictionary
+            for child in node_to_remove.parent.children:
+                if child.expression in node_to_remove.expression:
+                    child_to_remove = child
+                    break
+
+            del child_to_remove
+            ll = self.get_dataset_ll(dataset_train)
+            if ll > ll_0:
+                del self.library[node_to_remove.expression]
+                ll_0 = ll
+                print('Removed node:', node_to_remove)
+                print('LL:', ll)
+            else:
+                node_to_remove.parent.children.append(node_to_remove)
+
+            if step % log_every == 0:
+                
+                ll_train = self.get_dataset_ll(dataset_train)
+                ll_train /= len(flatten_arbitrarily_nested_lists(dataset_train))
+                results_dict['ll_train'].append(ll_train)
+                ll_val = self.get_dataset_ll(dataset_val)
+                ll_val /= len(flatten_arbitrarily_nested_lists(dataset_val))
+                results_dict['ll_val'].append(ll_val)
+
+                entropy = self.get_shannon_entropy()
+                entropy /= len(flatten_arbitrarily_nested_lists(dataset_train))
+                results_dict['entropy'].append(entropy)
+        
+                print(f'Step {step}: normalized ll train: {ll_train}, normalized ll val: {ll_val}, normalized entropy: {entropy}, library size: {len(self.library)}')
+
+        return results_dict
+
+
+
     # def get_library_leaves(self):
     #     return [node for node in self.library.values() if len(node.children)==0]
     
