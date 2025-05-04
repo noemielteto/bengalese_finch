@@ -1,23 +1,58 @@
 from bengalese_finch.models.probzip import *
-from sklearn.model_selection import train_test_split
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
 
-##############################################################################
+data = 'ababab'
+dataset = [data] * 1000
+compressor = ProbZip(alpha_vector=[1]*1000)
+compressor.get_terminals(data)
+symbol = compressor.compress(data, update_counts=False)
+symbol.probability(data, 0)
+results_dict = compressor.compress_dataset(dataset, steps=10000, log_every=1000)
+symbol = compressor.compress(data, update_counts=False)
+symbol
+symbol.probability(data, 0)
 
-# # learn bag of triplets data
-# triplets     = ['abc', 'def', 'ghi', 'jkl', 'mno']
-# dataset       = [''.join(np.random.choice(triplets, 20)) for _ in range(50)]
+for k, v in compressor.library.items():
+    print(f'{k}: {v.count}')
 
-dataset_allsubjects = get_data(strings=True)
-dataset = dataset_allsubjects['wh09pk88']
 
-compressor  = ProbZip(alpha=0.1)
-dataset_train, dataset_test = train_test_split(dataset, test_size=0.2, random_state=42)
-compressor.compress_dataset(dataset=dataset_train, steps=10000)
+data = 'abcd'
 
-compressor.compress(dataset_test[10])
+compressor = ProbZip(alpha_vector=[1]*1000)
+compressor.get_terminals(data)
+symbol = compressor.compress(data, update_counts=False)
+symbol.probability(data, 0)
 
-ll_test = compressor.get_dataset_ll(dataset_test)
-print(ll_test)
+data = 'abcd'
+dataset = [data] *1000
+compressor = ProbZip(alpha_vector=[1]*1000)
+compressor.get_terminals(data)
+symbol = compressor.compress('abcd', update_counts=False)
+symbol.probability(data, 0)
+
+compressor.library["['a', 'b']"] = Node(alpha_vector=compressor.alpha_vector,
+                                        parent=compressor.library['a'],
+                                        suffix=compressor.library['b'],
+                                        rate=None)
+compressor.library["[['a', 'b'], 'c']"] = Node(alpha_vector=compressor.alpha_vector,
+                                        parent=compressor.library["['a', 'b']"],
+                                        suffix=compressor.library['c'],
+                                        rate=None)
+compressor.library["[[['a', 'b'], 'c'], 'd']"] = Node(alpha_vector=compressor.alpha_vector,
+                                        parent=compressor.library["[['a', 'b'], 'c']"],
+                                        suffix=compressor.library['d'],
+                                        rate=None)
+
+results_dict = compressor.compress_dataset(dataset, steps=10000, log_every=1000)
+symbol = compressor.compress('abcd', update_counts=False)
+symbol.probability(data, 0)
+
+compressor.get_dataset_ll(dataset)
+
+for k, v in compressor.library.items():
+    print(f'{k}: {v.count}')
 
 # compressor  = ProbZip(alpha=.000001)
 # compressor.get_terminals(flatten_arbitrarily_nested_lists(dataset))
@@ -61,6 +96,33 @@ print(compressor.library['d'].children[0])
 print(compressor.library['g'].children[0])
 print(compressor.library['f'].children[0])
 print(compressor.library['n'].children[0])
+
+############
+
+triplets     = ['abc', 'def', 'ghi', 'jkl', 'mno']
+dataset       = [''.join(np.random.choice(triplets, 50)) for _ in range(100)]
+dataset_train, dataset_test = train_test_split(dataset, test_size=0.2, random_state=42)
+dataset_val, dataset_test = train_test_split(dataset_test, test_size=0.5, random_state=42)
+
+compressor = ProbZip(alpha=[1]*1000)
+compressor.get_terminals(flatten_arbitrarily_nested_lists(dataset))
+compressor.library["['a', 'b']"] = Node(alpha=compressor.alpha, parent=compressor.library['a'], suffix=compressor.library['b'], rate=None)
+compressor.library["[['a', 'b'], 'c']"] = Node(alpha=compressor.alpha, parent=compressor.library["['a', 'b']"], suffix=compressor.library['c'], rate=None)
+compressor.library["['d', 'e']"] = Node(alpha=compressor.alpha, parent=compressor.library['d'], suffix=compressor.library['e'], rate=None)
+compressor.library["[['d', 'e'], 'f']"] = Node(alpha=compressor.alpha, parent=compressor.library["['d', 'e']"], suffix=compressor.library['f'], rate=None)
+compressor.library["['g', 'h']"] = Node(alpha=compressor.alpha, parent=compressor.library['g'], suffix=compressor.library['h'], rate=None)
+compressor.library["[['g', 'h'], 'i']"] = Node(alpha=compressor.alpha, parent=compressor.library["['g', 'h']"], suffix=compressor.library['i'], rate=None)
+compressor.library["['j', 'k']"] = Node(alpha=compressor.alpha, parent=compressor.library['j'], suffix=compressor.library['k'], rate=None)
+compressor.library["[['j', 'k'], 'l']"] = Node(alpha=compressor.alpha, parent=compressor.library["['j', 'k']"], suffix=compressor.library['l'], rate=None)
+compressor.library["['m', 'n']"] = Node(alpha=compressor.alpha, parent=compressor.library['m'], suffix=compressor.library['n'], rate=None)
+compressor.library["[['m', 'n'], 'o']"] = Node(alpha=compressor.alpha, parent=compressor.library["['m', 'n']"], suffix=compressor.library['o'], rate=None)
+
+results_dict = compressor.search_add_remove(dataset_train=dataset_train,
+                                            dataset_val=dataset_val,
+                                            steps=10,
+                                            log_every=1)
+
+############
 
 # compressor  = ProbZip(alpha=1)
 # compressor.get_terminals(['a','b','c','d'])

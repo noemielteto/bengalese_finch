@@ -1,0 +1,3 @@
+Subject: wh08pk40
+Raw bout: <nnnnennennecxdmpabcxqrsnnecxdmpabcxqrsnnennecxdmpabcxqrsnnennennennecxdmpabcx>
+Parsed bout: [[[[[[[[[[[[[[[['<', [['n']*2, 'e']*3], [['d', 'm'], 'p']], ['a', 'b']], [[[['c', 'x'], ['q', 'r']], 's'], [['n']*2, 'e']]], [['c', 'x'], [['d', 'm'], 'p']]], ['a', 'b']], [[[['c', 'x'], ['q', 'r']], 's'], [['n']*2, 'e']]], [['n']*2, 'e']], [['c', 'x'], [['d', 'm'], 'p']]], ['a', 'b']], [[[['c', 'x'], ['q', 'r']], 's'], [['n']*2, 'e']]], [['n']*2, 'e']*3], [['d', 'm'], 'p']], ['a', 'b']], ['c', 'x']], '>']

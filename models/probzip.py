@@ -1,12 +1,44 @@
 from bengalese_finch.models.utils import *
 import numpy as np
-import math
-from scipy.stats import poisson
-
+from scipy.special import gammaln  # log-factorial
 import networkx as nx
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
+import time
+
+class ZeroTruncatedPoisson:
+    def __init__(self):
+        pass  # no need for max_k anymore
+
+    def pmf(self, k, mu):
+        k = np.asarray(k)
+        mu = float(mu)
+        pmf_vals = np.zeros_like(k, dtype=float)
+        valid = k >= 1
+        k_valid = k[valid]
+        log_pmf = -mu + k_valid * np.log(mu) - gammaln(k_valid + 1)
+        pmf_vals[valid] = np.exp(log_pmf) / (1 - np.exp(-mu))
+        return pmf_vals if pmf_vals.shape else float(pmf_vals)
+
+    def rvs(self, mu, random_state=None):
+        """Draw a single sample from a zero-truncated Poisson."""
+        rng = np.random.default_rng(random_state)
+        while True:
+            x = rng.poisson(mu)
+            if x > 0:
+                return x
+
+    def mean(self, mu):
+        mu = float(mu)
+        return mu / (1 - np.exp(-mu))
+
+    def var(self, mu):
+        mu = float(mu)
+        e_neg_mu = np.exp(-mu)
+        denom = 1 - e_neg_mu
+        return mu / denom * (1 + mu * e_neg_mu / denom) - (mu / denom)**2
+zt_poisson = ZeroTruncatedPoisson()
 
 def rewrite_list(lst):
     if len(lst) == 0:
@@ -118,7 +150,7 @@ def get_flat_expression(parent=None, prefix=None, suffix=None, rate=None):
 
 class Node:
 
-    def __init__(self, alpha_vector, parent=None, prefix=None, suffix=None, affix=None, rate=None):
+    def __init__(self, alpha, parent=None, prefix=None, suffix=None, affix=None, rate=None):
 
         self.parent         = parent
         self.prefix         = prefix
@@ -130,7 +162,7 @@ class Node:
 
         if parent is None:
             self.type            = 'terminal'
-            self.order           = 0        
+            self.order           = 0
         elif parent.is_emptystring():
             self.type            = 'terminal'
             self.order           = 1
@@ -141,7 +173,7 @@ class Node:
             else:
                 self.order           = parent.order + 1
 
-        self.alpha = alpha_vector[self.order]
+        self.alpha = alpha
 
         self.expression = get_expression(parent=parent, prefix=prefix, suffix=suffix, rate=rate)
         self.flat_expression = get_flat_expression(parent=parent, prefix=prefix, suffix=suffix, rate=rate)
@@ -150,6 +182,7 @@ class Node:
         
         if parent is not None:
             parent.children.append(self)
+            self.completions = parent.sample_completions(suffix, rate)
 
     def __repr__(self):
         return str(self.expression)
@@ -157,22 +190,50 @@ class Node:
     def is_emptystring(self):
         return self.expression == ''
 
-    def expand(self, rate=None):
+    def expand(self, sampled_repeat=False):
 
-        if self.type=='terminal':
+        # Recursively expand the expression
+
+        if self.type == 'terminal':
             return self.expression
+        elif self.rate is not None:
+            if sampled_repeat:
+                rate = zt_poisson.rvs(self.rate)
+            else:
+                rate = self.rate
+            return [self.parent.expand(sampled_repeat=sampled_repeat)] * rate
+        else:
+            return [self.parent.expand(sampled_repeat=sampled_repeat), self.suffix.expand(sampled_repeat=sampled_repeat)]
+
+    def sample_completions(self, suffix=None, rate=None, n_samples=10):
+        
+        # Similarly to expand(), recursively expands but only the right side of the expression
+        # (that is, the suffix or the repetation of the parent), allowing to condition on a fixed parent.
+
+        assert sum(x is not None for x in [suffix, rate]) == 1, "Exactly one of suffix or rate must be defined."
+
+        # It is very inelegant to do rate is None and not None separately; Maybe we should have a function that does expand_completion(), analogously to expand(), to handle both
+        if rate is not None:
+            # The completion is rate-1 repeats of the parent (the whole expression will be rate repeats of the parent)
+            completions = [flatten([self.expand(sampled_repeat=True)] * zt_poisson.rvs(rate-1)) for _ in range(n_samples)]
 
         else:
-            if self.rate is None:
-                return self.flat_expression
-
+            if isinstance(suffix, str):
+                completions = [suffix]
+            elif suffix.type == 'terminal':
+                # No need to sample
+                completions = [suffix.expression]
             else:
-                # sampled repeat
-                if rate is None:
-                    rate = poisson.rvs(self.rate)
+                completions = [flatten(suffix.expand(sampled_repeat=True)) for _ in range(n_samples)]
 
-                return self.parent.flat_expression * rate
+        # Convert to strings that can be used to match the data
+        completions = [''.join(completion) for completion in completions]
+        # Select unique completions
+        completions = list(set(completions))
 
+        return completions
+
+    #TODO(): Consider changing this to observed_rate in order to avoid confusion around rate=repeat+1
     def get_observed_repeat(self, data, i):
 
         observed_repeat = 0
@@ -190,27 +251,13 @@ class Node:
         if len(self.children)==0:
             return candidate_children
 
-        observed_repeat = self.get_observed_repeat(data, i)
         for child in self.children:
-
-            if child.rate is not None and observed_repeat:
-                candidate_children.append(child)
-        
-            else:
-                # Get completion of empty string, terminal or nonterminal
-                # TODO: remove this when clear
-                # if child.expression == '' or child.parent.expression == '' or child.affix is None:
-                #     completion = child.expression
-                if child.type == 'terminal':
-                    completion = child.flat_expression
-                elif child.affix is None:
-                    completion = child.expression
-                else:
-                    completion = child.affix.flat_expression
                 
-                # Mask the completion with the data -- only consider children that match the data
+            # Mask the completion with the data -- only consider children that have sampled completions that match the data
+            for completion in child.completions:
                 if completion == data[i:i+len(completion)]:
                     candidate_children.append(child)
+                    break
 
         return candidate_children
 
@@ -220,35 +267,52 @@ class Node:
         observed_repeat = self.get_observed_repeat(data, i)
         for child in children:
             if child.rate is not None:
-                p_poisson = poisson.pmf(observed_repeat+1, child.rate) + (1-poisson.pmf(child.rate, child.rate))
+                p_poisson = zt_poisson.pmf(observed_repeat+1, child.rate) + (1-zt_poisson.pmf(child.rate, child.rate))
             else:
                 p_poisson = 1
             poisson_weights.append(p_poisson)
         
         return poisson_weights
 
-    def get_shift(self, data, i):
+    # def get_shift(self, data, i):
+    #     # TODO: Modify this such that we get the shift for the poisson rate not the observed rate
+    #     # It should also be unified with expand() and sample_completions() somehow
+    #     # Maybe: complete(sampled=False) could do one completion from which we get the shift;
+    #     # And sample_completions() will call complete(sampled=True) n_samples times
 
-        if self.rate is not None:
-            observed_repeat = self.parent.get_observed_repeat(data, i)
-            shift = len(self.expand(rate=observed_repeat+1))-1
-        else:
-            if self.type == 'terminal':
-                shift = len(self.flat_expression)
-            else:
-                shift = len(self.affix.flat_expression)
-        return shift
+    #     if self.rate is not None:
+    #         # observed_repeat = self.parent.get_observed_repeat(data, i)
+    #         flat_expression = flatten(self.parent.expand())
+    #         shift = len(flat_expression)-1
+    #     else:
+    #         if self.type == 'terminal':
+    #             shift = len(self.flat_expression)
+    #         else:
+    #             shift = len(self.affix.flat_expression)
+
+    #     return shift
+
+    def get_shift(self, data, i):
+        
+        # Longest completion that matches the data
+        # We do this because we want to condition on all the data that we attribute to the chosen child;
+        # Otherwise we would create splitting
+        sorted_completions = sorted(self.completions, key=len, reverse=True)
+        for c in sorted_completions:
+            if c == data[i:i+len(c)]:
+                break
+
+        return len(c)
 
     def infer(self, data, i, update_counts=True):
 
         children = self.get_candidate_children(data, i)
-
-        # print('---------------------------------------')
-        # print('Candidate children:', children)
+        # print(children)
 
         # no candidates -> stay
         if not len(children):
-            # print('No candidates. Staying.')
+            if update_counts:
+                self.count += 1
             return self, i
 
         counts      = np.array([child.count for child in children])
@@ -261,8 +325,6 @@ class Node:
 
         # NOTE: There is a decision here on whether we allow inferring empty string or not.
         if (np.random.random() < prob_stay) and (self.expression != ''):
-        # if (np.random.random() < prob_stay):
-            # print('Probabilistically staying.')
             if update_counts:
                 self.count += 1
             return self, i
@@ -271,23 +333,53 @@ class Node:
             N_children = counts.sum()
             norm_children = N_children
             probs_seat = counts / norm_children
-            # print('Probs seat:', probs_seat)
-            # print(f'N: {N}, alpha: {alpha}, norm: {norm}, prob_stay: {prob_stay}, probs: {probs}')
             child = np.random.choice(children, p=probs_seat)
-            # print('Selected child:', child)
             shift = child.get_shift(data, i)
 
             child, i = child.infer(data=data, i=i+shift, update_counts=update_counts)
 
         return child, i
 
+    def predict(self):
+
+        # Predict is the same as infer; The two differences are:
+        # 1. predict() does not get 'to see' the candidate children that actally match the data
+        # 2. Relatedly, predict() does not see the observed repeat that matches the data
+        # 3. predict() does not update counts
+        children = self.children
+
+        # No children -> 
+        if not len(children):
+            return self
+
+        counts      = np.array([child.count for child in children])
+        N           = counts.sum()
+        alpha       = self.alpha
+        norm        = N + alpha
+        prob_stay   = alpha/norm
+
+        # NOTE: There is a decision here on whether we allow predicting empty string or not.
+        if (np.random.random() < prob_stay) and (self.expression != ''):
+            return self
+
+        else:
+            N_children = counts.sum()
+            norm_children = N_children
+            probs_seat = counts / norm_children
+            child = np.random.choice(children, p=probs_seat)
+
+            child = child.predict()
+
+        return child
+
     def probability_compress(self, data, i):
         
-        if self.expression == '':
+        # Note: Start symbol is handled as a special symbol whose marginal probability
+        # is 1 (Just like that of epsilon.)
+        if self.expression == '' or self.expression == '<':
             prob = 1
 
         else:
-            # siblings = self.parent.get_candidate_children(data, i)
             siblings = self.parent.children
             counts   = np.array([sibling.count for sibling in siblings])
             weights     = self.get_poisson_weights(data, i, siblings)
@@ -305,7 +397,6 @@ class Node:
 
     def probability_not_compress(self, data, i):
 
-        # children = self.get_candidate_children(data, i)
         children = self.children
         if len(children):
             counts = np.array([child.count for child in children])
@@ -336,11 +427,27 @@ class Node:
 
         return np.array(distr)
 
+    def get_entropy(self):
+
+        predictive_distr = self.get_predictive_distr()
+        entropy = -np.sum(predictive_distr * np.log2(predictive_distr + 1e-100))
+
+        return entropy
+    
+    # TODO: Track this in the library, just as order
+    def get_hierarchy(self):
+        symbol = self
+        hierarchy = 0
+        while symbol.parent is not None:
+            hierarchy += 1
+            symbol = symbol.parent
+        return hierarchy
+
 class ProbZip:
 
-    def __init__(self, alpha_vector):
-        self.alpha_vector           = alpha_vector
-        self.epsilon                = Node(alpha_vector=alpha_vector)
+    def __init__(self, alpha):
+        self.alpha                  = alpha
+        self.epsilon                = Node(alpha=alpha)
         self.library                = {'': self.epsilon}
 
     def __repr__(self):
@@ -358,11 +465,11 @@ class ProbZip:
 
     def get_terminals(self, data):
 
-        data = flatten_arbitrarily_nested_lists(data)
+        data = flatten(data)
         terminals = set(data)
         self.n_terminals = len(terminals)
         for terminal in terminals:
-            node = Node(alpha_vector=self.alpha_vector, parent=self.epsilon, suffix=terminal)
+            node = Node(alpha=self.alpha, parent=self.epsilon, suffix=terminal)
             self.library[terminal] = node
 
     def get_important_library(self, threshold=.95):
@@ -377,15 +484,35 @@ class ProbZip:
 
         return important_library
     
+    def add(self, node):
+
+        # TODO(noemi): Should have asserts here making sure we don't have children of parents not in library and vice versa
+
+        if node not in node.parent.children:
+            node.parent.children.append(node)
+        if node.expression not in self.library.keys():
+            self.library[node.expression] = node
+
+    def remove(self, node):
+
+        # TODO(noemi): Should have asserts here making sure we don't have children of parents not in library and vice versa
+
+        if node in node.parent.children:
+            node.parent.children.remove(node)
+        if node.expression in self.library.keys():
+            del self.library[node.expression]
+
     def compress_chain(self, data, update_counts=True):
 
-        i = 0
+        memoized_children = []
+
+        # Note: We condition on start symbol and start at index 1
+        i = 1
+        parent, i = self.library['<'].infer(data, i)
 
         # Several steps
         while i<len(data):
 
-            parent, i = self.epsilon.infer(data, i)
-  
             observed_repeat = parent.get_observed_repeat(data, i)
             if observed_repeat:
                 rate = observed_repeat + 1
@@ -397,6 +524,7 @@ class ProbZip:
             
             expression = get_expression(parent=parent, suffix=suffix, rate=rate)
 
+            new_child=False
             if expression in self.library.keys():
                 child = self.library[expression]
             elif expression in [c.expression for c in parent.children]:
@@ -405,16 +533,21 @@ class ProbZip:
                     c_i += 1
                 child = parent.children[c_i]
             else:
-                child = Node(alpha_vector=self.alpha_vector, parent=parent, suffix=suffix, rate=rate)
+                child = Node(alpha=self.alpha, parent=parent, suffix=suffix, rate=rate)
+                new_child=True
 
             if update_counts:
                 norm = parent.alpha + child.count
                 prob_stay = parent.alpha/norm
 
-                # Note: We prevent the creation of overlapping nonterminals here: if its parent
+                # Note: Here we wanted to prevent the creation of overlapping nonterminals here: if its parent
                 # or affix is already in the library, we don't memoize it. If its suffix is parent
-                # in the library, we don't memoize it.
-                if np.random.random() > prob_stay and not len(self.get_nonterminal_overlaps(child)) and child.order<7:
+                # in the library, we don't memoize it. But this is buggy: repeats are self-overlapping by definition.
+                # Rewrite the func to not include repeats or omit this and delete later as it's a hack anyways.
+                # if np.random.random() > prob_stay and not len(self.get_nonterminal_overlaps(child)) and child.order<7:
+
+                if True:
+                # if np.random.random() > prob_stay:
 
                     # We only memoize non-reduntant expressions
                     if child.flat_expression not in [node.flat_expression for node in self.library.values()]:
@@ -423,22 +556,31 @@ class ProbZip:
                         if expression in self.library.keys():
                             child.count += 1
                         else: 
-                            print('Memoizing expression:', expression)
+                            # print('Memoizing expression:', expression)
                             self.library[expression] = child
+                            memoized_children.append(child)
 
                     else:
-                        del child
+                        if new_child:
+                            self.remove(child)
                 
                 else:
-                    del child
+                    if new_child:
+                        self.remove(child)
                 
             else:
-                del child
+                if new_child:
+                    self.remove(child)
+
+            parent, i = self.epsilon.infer(data, i)
         
-        return None
+        return memoized_children
+        
 
     # TODO: unify compress and compress_onestep
     def compress_onestep(self, data, update_counts=True):
+
+        memoized_child = None
 
         i = 0
 
@@ -452,6 +594,7 @@ class ProbZip:
             if observed_repeat:
                 rate = observed_repeat + 1
                 suffix = None
+                i += len(parent.flat_expression) * observed_repeat
             else:
                 suffix, i = self.epsilon.infer(data, i)
                 rate = None
@@ -461,6 +604,7 @@ class ProbZip:
 
             # TODO(noemielteto): rewrite this in terms of infer()
 
+            new_child=False
             if expression in self.library.keys():
                 child = self.library[expression]
             elif expression in [c.expression for c in parent.children]:
@@ -469,16 +613,21 @@ class ProbZip:
                     c_i += 1
                 child = parent.children[c_i]
             else:
-                child = Node(alpha_vector=self.alpha_vector, parent=parent, suffix=suffix, rate=rate)
+                child = Node(alpha=self.alpha, parent=parent, suffix=suffix, rate=rate)
+                new_child=True
 
             if update_counts:
                 norm = parent.alpha + child.count
                 prob_stay = parent.alpha/norm
 
-                # Note: We prevent the creation of overlapping nonterminals here: if its parent
+                # Note: Here we wanted to prevent the creation of overlapping nonterminals here: if its parent
                 # or affix is already in the library, we don't memoize it. If its suffix is parent
-                # in the library, we don't memoize it.
-                if np.random.random() > prob_stay and not len(self.get_nonterminal_overlaps(child)) and child.order<7:
+                # in the library, we don't memoize it. But this is buggy: repeats are self-overlapping by definition.
+                # Rewrite the func to not include repeats or omit this and delete later as it's a hack anyways.
+                # if np.random.random() > prob_stay and not len(self.get_nonterminal_overlaps(child)) and child.order<7:
+
+                if True:
+                # if np.random.random() > prob_stay:
 
                     # We only memoize non-reduntant expressions
                     if child.flat_expression not in [node.flat_expression for node in self.library.values()]:
@@ -487,36 +636,40 @@ class ProbZip:
                         if expression in self.library.keys():
                             child.count += 1
                         else: 
-                            print('Memoizing expression:', expression)
+                            # print('Memoizing expression:', expression)
                             self.library[expression] = child
-
-                        parent = child
+                            memoized_child = child
 
                     else:
-                        del child
+                        if new_child:
+                            self.remove(child)
                 
                 else:
-                    del child
+                    if new_child:
+                        self.remove(child)
                 
             else:
-                del child
+                if new_child:
+                    self.remove(child)
         
-        return parent
+        return memoized_child
 
     def compress(self, data, update_counts=False):
 
-        children_created = []
+        memoized_children = []
+        # Note: We condition on start symbol and start at index 1
+        i = 1
+        parent, i = self.library['<'].infer(data, i, update_counts=update_counts)
 
-        i = 0
-        parent, i = self.epsilon.infer(data, i, update_counts=False)
         while i<len(data):
             
             observed_repeat = parent.get_observed_repeat(data, i)
             if observed_repeat:
                 rate = observed_repeat + 1
                 suffix = None
+                i += len(parent.flat_expression) * observed_repeat
             else:
-                suffix, i = self.epsilon.infer(data, i, update_counts=False)
+                suffix, i = self.epsilon.infer(data, i, update_counts=update_counts)
                 rate = None
             
             expression = get_expression(parent=parent, suffix=suffix, rate=rate)
@@ -531,119 +684,40 @@ class ProbZip:
                     c_i += 1
                 child = parent.children[c_i]
             else:
-                child = Node(alpha_vector=self.alpha_vector, parent=parent, suffix=suffix, rate=rate)
+                child = Node(alpha=self.alpha, parent=parent, suffix=suffix, rate=rate)
+                memoized_children.append(child)
 
-            children_created.append(child)
             parent = child
-        
-        return parent, children_created
 
-    
-    def random_node_to_add(self):
+        return parent, memoized_children
 
-        parent = np.random.choice(list(self.library.values()))
-        # Prior for suffix or rate is .5; Can be hyperparameter
-        if np.random.random() < .5:
-            suffix = np.random.choice(list(self.library.values()))
-            rate = None
-        else:
-            rate = np.random.choice([1, 2, 3, 4, 5])
-            suffix = None
+    def compress_list(self, data, update_counts=True):
 
-        child = Node(alpha_vector=self.alpha_vector, parent=parent, suffix=suffix, rate=rate)
+        symbols = []
+        probs = []
+        # Note: We condition on start symbol and start at index 1
+        i = 1
+        symbol, i_next = self.library['<'].infer(data, i, update_counts=update_counts)
+        probs.append(symbol.probability(data, i))
+        symbols.append(symbol)
 
-        return child
-
-    def random_node_to_remove(self):
-
-        # Should we remove leaves only? Or entire subtrees?
-        # node = np.random.choice(list(self.library.values()))
-
-        leaves = [node for node in self.library.values() if len(node.children)==0]
-        node = np.random.choice(leaves)
-        
-        return node
-
-    def search_add_remove(self, dataset_train, dataset_val, steps=1000, log_every=100):
-
-        self.get_terminals(dataset_train)
-        results_dict = {'ll_train': [], 'll_val': [], 'entropy': []}
-
-        for step in range(steps):
-
-            ll_0 = self.get_dataset_ll(dataset_train)
-            node_to_add = self.random_node_to_add()
-            print('Considering adding node:', node_to_add)
-            ll = self.get_dataset_ll(dataset_train)
-            if ll > ll_0:
-                self.library[node_to_add.expression] = node_to_add
-                ll_0 = ll
-                print('Added node:', node_to_add)
-                print('Node order:', node_to_add.order)
-                print('LL:', ll)
-            else:
-                del node_to_add
+        while i<len(data):
             
-            node_to_remove = self.random_node_to_remove()
-            print('Considering removing node:', node_to_remove)
-            child_to_remove = None
-            # This part would be much more straightforward if children was a dictionary
-            for child in node_to_remove.parent.children:
-                if child.expression in node_to_remove.expression:
-                    child_to_remove = child
-                    break
+            i = i_next
+            symbol, i_next = self.epsilon.infer(data, i, update_counts=update_counts)
+            probs.append(symbol.probability(data, i))
+            symbols.append(symbol)
+            
+        return symbols, probs
 
-            del child_to_remove
-            ll = self.get_dataset_ll(dataset_train)
-            if ll > ll_0:
-                del self.library[node_to_remove.expression]
-                ll_0 = ll
-                print('Removed node:', node_to_remove)
-                print('LL:', ll)
-            else:
-                node_to_remove.parent.children.append(node_to_remove)
+    def get_leaves(self):
+        leaves = [node for node in self.library.values() if len(node.children)==0]
+        return leaves
 
-            if step % log_every == 0:
-                
-                ll_train = self.get_dataset_ll(dataset_train)
-                ll_train /= len(flatten_arbitrarily_nested_lists(dataset_train))
-                results_dict['ll_train'].append(ll_train)
-                ll_val = self.get_dataset_ll(dataset_val)
-                ll_val /= len(flatten_arbitrarily_nested_lists(dataset_val))
-                results_dict['ll_val'].append(ll_val)
-
-                entropy = self.get_shannon_entropy()
-                entropy /= len(flatten_arbitrarily_nested_lists(dataset_train))
-                results_dict['entropy'].append(entropy)
+    # TODO: Rename
+    def get_entropy(self):
         
-                print(f'Step {step}: normalized ll train: {ll_train}, normalized ll val: {ll_val}, normalized entropy: {entropy}, library size: {len(self.library)}')
-
-        return results_dict
-
-
-
-    # def get_library_leaves(self):
-    #     return [node for node in self.library.values() if len(node.children)==0]
-    
-    # def get_shannon_entropy(self, data):
-    #     leaves = self.get_library_leaves()
-    #     leaf_probs = [leaf.probability(data, 0) for leaf in leaves]
-    #     entropy = 0.0
-    #     for p in leaf_probs:
-    #         if p > 0:
-    #             entropy -= p * math.log2(p)
-    #     return entropy
-
-    # def get_dataset_shannon_entropy(self, dataset):
-    #     entropies = [self.get_shannon_entropy(data) for data in dataset]
-    #     return np.mean(entropies)
-
-    def get_shannon_entropy(self):
-        entropy = 0.0
-        for node in self.library.values():
-            probs = node.get_predictive_distr()
-            entropy -= np.sum(probs * np.log2(probs))
-        return entropy
+        return np.sum([node.get_entropy() for node in self.library.values()])
 
     def remove_redundant_nodes(self):
         n_redundant = 0
@@ -656,134 +730,310 @@ class ProbZip:
         return n_redundant
 
     def get_nonterminal_overlaps(self, node):
+        
+        if node.rate is not None:
+            return []
+
         overlaps = []
         for key, other_node in self.library.items():
             if node.parent == other_node.affix or node.affix == other_node.parent:
                 overlaps.append(other_node)
         return overlaps
 
-    def compress_dataset(self, dataset_train, dataset_val=None, steps=1000, log_every=100):
+    def compress_dataset(self, dataset_train, dataset_val, dataset_test, steps=1000, prune_every=1000, log=False, log_every=100):
 
-        results_dict = {'ll_train': [], 'll_val': [], 'entropy': []}
-        n_train = len(flatten_arbitrarily_nested_lists(dataset_train))
-        n_val = len(flatten_arbitrarily_nested_lists(dataset_val)) if dataset_val is not None else None
+        results_dict = {'mdl_data_train': [], 'mdl_data_val': [], 'mdl_data_test': [], 'mdl_library': [], 'library_size': [], 'mdl': []}
 
-        self.get_terminals(dataset_train)
-        for step in range(steps):
+        n_train = len(flatten(dataset_train))
+        n_val = len(flatten(dataset_val))
+        n_test = len(flatten(dataset_test))
+
+        self.get_terminals(dataset_train+dataset_val)
+        # Important note: We do steps+1 steps to make sure that a final pruning happens at the end
+        step = 0
+        converged = False
+        while not converged and step<steps+1:
+
             song = np.random.choice(dataset_train)
-            # random start index in song
-            i = np.random.randint(len(song))
-            # i = 0
-            _ = self.compress_onestep(song[i:])
-            # _ = self.compress_chain(song)
-            # _, _ = self.compress(song)
 
-            if step % log_every == 0:
+            # if True:
+            # # Burn-in plus later alternation
+            if (step<steps*.2) or (step % 5 == 0):
+            # Alternation
+            # if (step % 2 == 0):
+                # t = time.time()
+                i = np.random.randint(len(song))
+                symbol = self.compress_onestep(song[i:])
+                # print(f'Compress onestep took {time.time()-t} seconds.')
+                # Note: We only remove newly memoized symbols; A more nuanced version will unseat customers but that will be much more costly as it would be done in every single step
+                if symbol is not None:
 
-                ll_train = self.get_dataset_ll(dataset_train)
-                ll_train /= n_train
-                results_dict['ll_train'].append(ll_train)
-                ll_val = None
+                    # t = time.time()
 
-                entropy = self.get_shannon_entropy()
-                entropy /= n_train
-                results_dict['entropy'].append(entropy)
+                    mdl_1 = self.mdl([song])
 
-                if dataset_val is not None:
-                    ll_val = self.get_dataset_ll(dataset_val)
-                    ll_val /= n_val
-                    results_dict['ll_val'].append(ll_val)
-        
-                print(f'Step {step}: normalized ll train: {ll_train}, normalized ll val: {ll_val}, normalized entropy: {entropy}, library size: {len(self.library)}')
+                    self.remove(symbol)
+                    mdl_0 = self.mdl([song])
 
+                    if mdl_1 < mdl_0:
+                        self.add(symbol)
+                    #     print('Added symbol:', symbol)
+                    # else:
+                    #     print(f'Removed symbol: {symbol}')
+                    # print(f'Checking whether to keep symbol took {time.time()-t} seconds.')             
+
+            else:
+                # t = time.time()
+                symbols = self.compress_chain(song)
+                # print(f'Compress chain took {time.time()-t} seconds.')
+                # _, symbols = self.compress(song, update_counts=False)
+                # Note: We only remove newly memoized symbols; A more nuanced version will unseat customers but that will be much more costly as it would be done in every single step
+                if len(symbols):
+
+                    t = time.time()
+
+                    mdl_1 = self.mdl([song])
+
+                    for symbol in symbols:
+                        self.remove(symbol)
+
+                    mdl_0 = self.mdl([song])
+                    
+                    if mdl_1 < mdl_0:
+                        for symbol in symbols:
+                            self.add(symbol)
+                    #         print('Added symbols:', symbols)
+                    # else:
+                    #     print(f'Removed symbols: {symbols}')
+
+                    # print(f'Checking whether to keep symbols took {time.time()-t} seconds.')
+
+            if (step>steps*.2) and (step % prune_every == 0):
+                self.prune(dataset_val)
+
+            if log and (step % log_every == 0):
+
+                mdl_data_train = - self.get_dataset_ll(dataset_train)
+                mdl_data_train /= n_train
+                results_dict['mdl_data_train'].append(mdl_data_train)
+
+                mdl_data_val = - self.get_dataset_ll(dataset_val)
+                mdl_data_val /= n_val
+                results_dict['mdl_data_val'].append(mdl_data_val)
+
+                mdl_data_test = - self.get_dataset_ll(dataset_test)
+                mdl_data_test /= n_test
+                results_dict['mdl_data_test'].append(mdl_data_test) 
+
+                mdl_library = self.get_entropy()
+                mdl_library /= n_val
+                results_dict['mdl_library'].append(mdl_library)
+                library_size = len(self.get_important_library(threshold=1))
+                results_dict['library_size'].append(library_size)
+
+                results_dict['mdl'].append(self.mdl(dataset_val)/n_val)
+
+                print(f'Step {step}: normalized mdl train: {mdl_data_train}, normalized mdl val: {mdl_data_val}, normalized mdl test: {mdl_data_test}, normalized mdl library: {mdl_library}, library size: {library_size}')
+
+                if log:
+                    converged = self.converged(results_dict)
+            else:
+                if step % 1000 == 0:
+                    print(f'Step {step}')
+            
+            step += 1
+
+        # Final pruning
+        self.prune(dataset_val)
+
+        # Final MDL computation
+        if not log:
+            # TODO: Logging should be a function because it's repeated
+            mdl_data_train = - self.get_dataset_ll(dataset_train)
+            mdl_data_train /= n_train
+            results_dict['mdl_data_train'].append(mdl_data_train)
+
+            mdl_data_val = - self.get_dataset_ll(dataset_val)
+            mdl_data_val /= n_val
+            results_dict['mdl_data_val'].append(mdl_data_val)
+
+            mdl_data_test = - self.get_dataset_ll(dataset_test)
+            mdl_data_test /= n_test
+            results_dict['mdl_data_test'].append(mdl_data_test) 
+
+            mdl_library = self.get_entropy()
+            mdl_library /= n_val
+            results_dict['mdl_library'].append(mdl_library)
+            library_size = len(self.get_important_library(threshold=1))
+            results_dict['library_size'].append(library_size)
+
+            results_dict['mdl'].append(self.mdl(dataset_val)/n_val)
+
+        print(f'Converged at step {step}.')
         return results_dict
 
-    def get_dataset_ll(self, dataset):
-        liks = []
+    def prune(self, dataset_val):
+        # print('Pruning entire library.')
+
+        symbols_removed = True
+        while symbols_removed:
+
+            mdl_0 = self.mdl(dataset_val)
+            leaves = self.get_leaves()
+            nonterminal_leaves = [node for node in leaves if node.type=='nonterminal']
+            symbols_to_remove = []
+            for symbol in nonterminal_leaves:
+                self.remove(symbol)
+                mdl_1 = self.mdl(dataset_val)
+
+                if mdl_1 < mdl_0:
+                    symbols_to_remove.append(symbol)
+                
+                self.add(symbol)
+
+            # print(f'Removing symbols: {symbols_to_remove}')
+            for symbol in symbols_to_remove:
+                self.remove(symbol)
+            symbols_removed = len(symbols_to_remove)
+
+        # print('Finished pruning library.')
+
+    def converged(self, results_dict, threshold=0.01):
+        """
+        Check if the model has converged based on the change in MDL in last 10 recorded steps.
+        """
+
+        if len(results_dict['mdl']) < 10:
+            return False
+
+        # Calculate the differences between consecutive values
+        differences = np.abs(np.diff(results_dict['mdl'][-10:]))
+
+        # Threshold is threshold proportion of the last value
+        threshold = threshold * np.abs(results_dict['mdl'][-1])
+
+        # Check if all differences are below the threshold
+        return np.all(differences < threshold)
+
+    def generate(self):
+        data = []
+        symbol = self.library['<'].predict()
+        data.append(symbol.expand(sampled_repeat=True))
+
+        while symbol.flat_expression[-1]!='>':    
+            symbol = self.library[''].predict()
+            data.append(symbol.expand(sampled_repeat=True))
+        
+        return flatten(data)
+
+    def generate_dataset(self, size=100):
+        dataset = []
+        for _ in range(size):
+            data = self.generate()
+            dataset.append(data)
+        return dataset
+
+    def get_dataset_ll(self, dataset, samples=3):
+
+        lls = []
         for data in dataset:
-            symbol, children_created = self.compress(data)
-            liks.append(symbol.probability(data, 0))
+            lls.append(self.get_ll(data, samples=samples))
 
-            # clean up inferred children!
-            for child in children_created:
-                del child
-            
-        return np.sum(np.log((np.array(liks))))
-    
+        return np.sum(lls)
 
-    # def plot(self, save_name=None, threshold=.95):
+    def get_ll(self, data, samples=3):
 
-    #     important_library = self.get_important_library(threshold=threshold)
+        ll_estimate = 0
+        for _ in range(samples):
 
-    #     nodes = list(important_library.keys())
-    #     terminals = [x for x in nodes if len(x)==1]
-    #     nonterminals = [x for x in nodes if len(x)>1]
+            symbol, memoized_children = self.compress(data)
+            l = symbol.probability(data, 0)
+            ll = np.log2(l)
+            ll_estimate += ll
 
-    #     edges = []
-    #     for node_expression, node in important_library.items():
+            for child in memoized_children:
+                self.remove(child)
 
-    #         if not len(important_library[node_expression].children):
-    #             # TODO: mark terminal?
-    #             continue
+        return ll_estimate/samples
 
-    #         children = important_library[node_expression].children
-    #         # left child only
-    #         # children = [important_library[node_expression].children[0]]
+    def mdl(self, dataset):
+        
+        return - self.get_dataset_ll(dataset) + self.get_entropy()
 
-    #         for child in children:
+    def write_to_txt(self, file_path):
 
-    #             # weighted
-    #             # edges.append((child.expression, node_expression, compressor.library[child.expression].parents[node]))
-    #             # unweighted
-    #             edges.append((child.expression, node_expression))
+        with open(file_path, 'w') as f:
+            for key, node in self.library.items():
+                # Extract the keys (expressions) of the children
+                children_keys = [child.expression for child in node.children]
+                # Write the key and its children to the file
+                f.write(f"{key}: {children_keys}\n")
 
-    #     # Create a directed graph
-    #     G = nx.DiGraph()
+    def plot(self, save_name=None):
 
-    #     for edge in edges:
-    #         # G.add_edge(edge[0], edge[1], weight=edge[2])
-    #         G.add_edge(edge[0], edge[1])
+        # TODO: Decide if we want to plot the entire library or only the important library
+        # important_library = self.get_important_library(threshold=.95)
+        important_library = self.library
 
-    #     # weights = [G[u][v]['weight'] for u, v in G.edges()]
-    #     # normalized_weights = [w / max(weights) * 10 for w in weights]
+        # Sort library alphabetically
+        important_library = dict(sorted(important_library.items(), key=lambda item: item[0]))
+        nonterminals = [node for node in important_library.values() if node.type=='nonterminal']
 
-    #     # pos = graphviz_layout(G, prog='dot')
-    #     pos = tree_layout(G, root='')  # Root of tree is the empty string
+        edges = []
+        for parent_node_expression, parent_node in important_library.items():
+            for node_expression, node in important_library.items():
+                if node in parent_node.children:
+                    edges.append((parent_node_expression, node_expression))
 
-    #     # only color nonterminals; terminals will stay black
-    #     cmap = plt.cm.get_cmap('tab20', len(nonterminals))
-    #     colors = [cmap(i) for i in range(len(nonterminals))]
-    #     colormap = dict(zip(nonterminals, colors))
+        # Create a directed graph
+        G = nx.DiGraph()
 
-    #     _, ax = plt.subplots(figsize=(16, 4))
-    #     # nx.draw_networkx_edges(G, pos, width=normalized_weights, ax=ax)  # Set edge widths based on weights
-    #     nx.draw_networkx_edges(G, pos, ax=ax)
-    #     nx.draw_networkx_labels(G, pos, font_color='white', ax=ax)
+        for edge in edges:
+            # G.add_edge(edge[0], edge[1], weight=edge[2])
+            G.add_edge(edge[0], edge[1])
 
-    #     # Draw nodes and edges separately to customize their properties
-    #     # nx.draw_networkx_nodes(G, pos, node_color='white')
-    #     rect_width = 4
-    #     rect_height = 40
-    #     for node, (x, y) in pos.items():
-    #         color = colormap.get(node, 'black')  # Default to black if node color not specified
+        # weights = [G[u][v]['weight'] for u, v in G.edges()]
+        # normalized_weights = [w / max(weights) * 10 for w in weights]
 
-    #         scaling_factor = max(3, len(node))
-    #         width = rect_width*scaling_factor  # increase minimum width so that boxes for terminals are not too narrow
-    #         height = rect_height
+        # pos = graphviz_layout(G, prog='dot')
+        pos = tree_layout(G, root='')  # Root of tree is the empty string
 
-    #         rectangle = mpatches.FancyBboxPatch((x - width / 2, y - height / 2), width, height,
-    #                                         boxstyle="square,pad=0",
-    #                                         ec='black', fill=True, facecolor=color, lw=3, transform=ax.transData)
-    #         ax.add_patch(rectangle)
+        # only color nonterminals; terminals will stay black
+        cmap = plt.cm.get_cmap('tab20', len(nonterminals))
+        colors = [cmap(i) for i in range(len(nonterminals))]
+        colormap = {node.expression: color for node, color in zip(nonterminals, colors)}
 
-    #     plt.gca().invert_yaxis()
-    #     plt.axis('off')
-    #     plt.tight_layout()
-    #     if save_name is not None:
-    #         plt.savefig(save_name, dpi=500)
-    #         plt.close('all')
-    #     else:
-    #         plt.show()
+        # Library order is max node order
+        library_order = max([node.order for node in important_library.values()])
+        _, ax = plt.subplots(figsize=(20, library_order))
+       
+        # nx.draw_networkx_edges(G, pos, width=normalized_weights, ax=ax)  # Set edge widths based on weights
+        nx.draw_networkx_edges(G, pos, ax=ax, width=3)
+        nx.draw_networkx_labels(G, pos, font_color='black', font_size=20, ax=ax)
+
+        # Draw nodes and edges separately to customize their properties
+        # nx.draw_networkx_nodes(G, pos, node_color='white')
+        rect_width = 0.02
+        rect_height = 0.1
+        for node, (x, y) in pos.items():
+            color = colormap.get(node, 'white')  # Default color if node color not specified
+            scaling_factor = max(1, len(node))
+            width = rect_width*scaling_factor  # increase minimum width so that boxes for terminals are not too narrow
+            height = rect_height
+
+            rectangle = mpatches.FancyBboxPatch((x - width / 2, y - height / 2), width, height,
+                                            boxstyle="square,pad=0",
+                                            ec='black', fill=True, facecolor=color, lw=3, transform=ax.transData)
+            ax.add_patch(rectangle)
+
+        plt.gca().invert_yaxis()
+        plt.axis('off')
+        plt.tight_layout()
+        if save_name is not None:
+            plt.savefig(save_name, dpi=100)
+            plt.close('all')
+        else:
+            plt.show()
 
 
 def tree_layout(G, root, width=1.0, vert_gap=0.2, vert_loc=0, xcenter=0.5, pos=None, parent=None):
@@ -814,11 +1064,20 @@ def tree_layout(G, root, width=1.0, vert_gap=0.2, vert_loc=0, xcenter=0.5, pos=N
         neighbors.remove(parent)
 
     if len(neighbors) != 0:
-        # Divide the horizontal space among children.
-        dx = width / len(neighbors)
-        next_x = xcenter - width / 2 - dx / 2
+        # Compute the total length of all child expressions
+        total_length = sum(len(neighbor) for neighbor in neighbors)
+
+        # Adjust the total width based on the total length of the children
+        adjusted_width = max(width, total_length * 0.001 * len(neighbors))
+
+        # Divide the horizontal space proportionally based on the length of each child's expression
+        next_x = xcenter - adjusted_width / 2
         for neighbor in neighbors:
-            next_x += dx
-            pos = tree_layout(G, neighbor, width=dx, vert_gap=vert_gap,
-                                vert_loc=vert_loc - vert_gap, xcenter=next_x, pos=pos, parent=root)
+            # Proportional width for this child
+            child_width = adjusted_width * (len(neighbor) / total_length)
+            next_x += child_width / 2  # Center the child within its allocated space
+            pos = tree_layout(G, neighbor, width=child_width, vert_gap=vert_gap,
+                              vert_loc=vert_loc - vert_gap, xcenter=next_x, pos=pos, parent=root)
+            next_x += child_width / 2  # Move to the next child's position
+
     return pos

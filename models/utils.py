@@ -16,9 +16,6 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 # The project root is one directory up from 'models'
 project_root = os.path.dirname(current_dir)
 
-def flatten(t):
-    return [item for sublist in t for item in sublist]
-
 def corrfunc(x,y, ax=None, **kws):
     """Plot the correlation coefficient in the top left hand corner of a plot - like seaborn pairplot."""
     """You will need to call g.map_lower(corrfunc) """
@@ -53,12 +50,15 @@ def my_normpdf(x, mean, sd):
 def product_of_list(lst):
     return reduce(lambda x, y: x * y, lst)
 
-def flatten_arbitrarily_nested_lists(nested_list):
+def flatten(nested_list):
+    """
+    Flattens a nested list into a single string.
+    """
     result = ""
     for element in nested_list:
         if isinstance(element, list):
             # If the element is a list, recursively flatten it
-            result += flatten_arbitrarily_nested_lists(element)
+            result += flatten(element)
         else:
             # If the element is not a list, concatenate it directly
             result += element
@@ -203,9 +203,9 @@ def get_data(experimenter='Lena', phase='baseline', strings=False):
                 if strings:
                     for bout in contents.split('Y')[1:-1]:
                         if len(bout):
-                            # data[data_label].append('<' + bout + '>')
-                            # Note: Removed the <> brackets because they are not necessary for ProbZip! Reconsider if needed.
-                            data[data_label].append(bout)
+                            data[data_label].append('<' + bout + '>')
+                            # Note: Remove the <> brackets if not necessary for ProbZip.
+                            # data[data_label].append(bout)
                 else:
                     for bout in contents.split('Y')[1:-1]:
                         if len(bout):

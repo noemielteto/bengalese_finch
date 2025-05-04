@@ -1,0 +1,3 @@
+Subject: bu86bu48
+Raw bout: <lrllrpdddpaccxyrpdddpaccxywrpdddpaccxylwwwrpdddpaccrwwrpdddpaccxylrpdddpacc>
+Parsed bout: [[[[[[[[[[[[[[[[[['<', 'l'], ['r', 'l']], 'l'], [['r', 'p'], [['d']*3, [['p', 'a'], ['c']*2]]]], ['x', 'y']], [['r', 'p'], [['d']*3, [['p', 'a'], ['c']*2]]]], ['x', 'y']], 'w'], [['r', 'p'], [['d']*3, [['p', 'a'], ['c']*2]]]], [['x', 'y'], 'l']], ['w']*2], [['r', 'p'], [['d']*3, [['p', 'a'], ['c']*2]]]], 'r'], ['w']*2], [['r', 'p'], [['d']*3, [['p', 'a'], ['c']*2]]]], [['x', 'y'], 'l']], [['r', 'p'], [['d']*3, [['p', 'a'], ['c']*2]]]], '>']
