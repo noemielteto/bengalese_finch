@@ -1,6 +1,7 @@
 from bengalese_finch.models.probzip import *
 import pandas as pd
 import pickle
+import seaborn as sns
 
 models_dir = 'bengalese_finch/analyses/probzip/fitted_models/'
 figs_dir = 'bengalese_finch/analyses/probzip/figs/'
@@ -145,17 +146,22 @@ learning_scores['average_hierarchy'] = (learning_scores[('hierarchy', 'T1')] + l
 # Flatten the MultiIndex columns
 learning_scores.columns = ['_'.join(col) if isinstance(col, tuple) else col for col in learning_scores.columns]
 
-plt.scatter(learning_scores['cue_difference_score_'], learning_scores['average_hierarchy_'])
-plt.tight_layout()
-plt.show()
+# plt.scatter(learning_scores['cue_difference_score_'], learning_scores['average_hierarchy_'])
+# plt.tight_layout()
+# plt.show()
 
-sns.regplot(data=learning_scores, x='change_score_C2', y='hierarchy_T1')
+sns.regplot(data=learning_scores, x='change_score_C1', y='hierarchy_T1', color='k')
+# Add colored data points for each subject
+for i, subject in enumerate(learning_scores.index):
+    plt.scatter(learning_scores['change_score_C1'][i], learning_scores['hierarchy_T1'][i], label=subject, color=sns.color_palette()[i])
+plt.legend(title='subject', bbox_to_anchor=(1.05, 1), loc='upper left')
 plt.tight_layout()
 plt.show()
 
 # Spearman correlation
-from scipy.stats import spearmanr
+from scipy.stats import spearmanr, pearsonr
 spearmanr(learning_scores['change_score_C1'], learning_scores['hierarchy_T1'])
+pearsonr(learning_scores['change_score_C1'], learning_scores['hierarchy_T1'])
 spearmanr(learning_scores['change_score_C2'], learning_scores['hierarchy_T1'])
 spearmanr(learning_scores['change_score_C1'], learning_scores['hierarchy_T2'])
 spearmanr(learning_scores['change_score_C2'], learning_scores['hierarchy_T2'])

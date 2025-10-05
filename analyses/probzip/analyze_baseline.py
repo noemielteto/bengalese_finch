@@ -7,7 +7,7 @@ from sklearn.model_selection import train_test_split
 
 #################################################################################
 
-models_dir = 'bengalese_finch/analyses/probzip/fitted_models_new/'
+models_dir = 'bengalese_finch/analyses/probzip/fitted_models_new_new/'
 figs_dir = 'bengalese_finch/analyses/probzip/figs/'
 data = get_data(experimenter='Lena', strings=True)
 subjects = list(data.keys())

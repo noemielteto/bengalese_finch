@@ -8,12 +8,12 @@ import os
 
 #################################################################################
 
-models_dir = 'bengalese_finch/analyses/probzip/fitted_models_synthetic/'
+models_dir = 'bengalese_finch/analyses/probzip/fitted_models_synthetic_new/'
 figs_dir = 'bengalese_finch/analyses/probzip/figs/synthetic/'
 groundtruth_models_dir = 'bengalese_finch/analyses/probzip/groundtruth_models_synthetic/'
 
 n_models = len([name for name in os.listdir(groundtruth_models_dir) if os.path.isfile(os.path.join(groundtruth_models_dir, name))])
-dataset_sizes = [10, 100, 1000]
+dataset_sizes = [10, 50, 100]
 tasks = [(i, size) for i in range(n_models) for size in dataset_sizes]
 
 def get_models_results(models_dir):
@@ -54,10 +54,17 @@ models, models_results = get_models_results(models_dir)
 
 ###########################################################################
 
-model_i = 2
+model_i = 1
 best_model_i = [get_best_model_i(models_results[model_i][dataset_size]) for dataset_size in dataset_sizes]
 best_models = [models[model_i][dataset_size][best_model_i[i]] for i, dataset_size in enumerate(dataset_sizes)]
+a = [sum([1 for x in m.generate_dataset(size=1000) if x =='<abc>']) for m in best_models]
 
+# compressor = best_models[1]
+
+# data = '<aaaabcbc>'
+# symbol, _ = compressor.compress(data)
+
+###########################################################################
 
 # Write models and data to files
 for model_i in range(n_models):
@@ -83,14 +90,14 @@ for model_i in range(n_models):
 
     # Write nonterminals to file
     with open(f'{figs_dir}nonterminals_fitted_{model_i}.txt', 'w') as f:
-        compressor = best_models[1]
+        compressor = best_models[2]
         nonterminals = [x for x in compressor.library.values() if x.type == 'nonterminal']
         # Sort them by order
         nonterminals = sorted(nonterminals, key=lambda x: x.order)
         for n in nonterminals:
             f.write(f'{n}\n')
 
-    test_data = best_models[1].generate_dataset(size=10)
+    test_data = best_models[2].generate_dataset(size=10)
     with open(f'{figs_dir}data_fitted_{model_i}.txt', 'w') as f:
         for x in test_data:
             f.write(f'{x}\n')    
@@ -110,7 +117,7 @@ for model_i in range(n_models):
     best_models[1].plot(save_name=f'{figs_dir}fitted_library_model_{model_i}.png')
 
 # Plot MDL as a function of dataset size
-f, ax = plt.subplots(1, n_models, figsize=(3*n_models, 3), sharex=True, sharey=True)
+f, ax = plt.subplots(1, n_models, figsize=(5*n_models, 3), sharex=True, sharey=True)
 for model_i in range(n_models):
 
     with open(f'{groundtruth_models_dir}model_{model_i}.pkl', 'rb') as f:
@@ -135,11 +142,11 @@ for model_i in range(n_models):
         
     # Fitted
     fitted_data_mdl_mean = np.mean(fitted_data_mdl, axis=0)
-    ax[model_i].plot(range(len(fitted_data_mdl_mean)), fitted_data_mdl_mean, color='k', lw=3, ls='--',)
+    ax[model_i].plot(range(len(fitted_data_mdl_mean)), fitted_data_mdl_mean, color='k', lw=3, ls='--', label='recovered')
     for i, dataset_size in enumerate(dataset_sizes):
         ax[model_i].errorbar(range(len(fitted_data_mdl_mean)), fitted_data_mdl_mean, yerr=np.std(np.array(fitted_data_mdl), axis=0), fmt='o', color='k', lw=3, capsize=5)
     # Ground truth line
-    ax[model_i].plot(range(len(fitted_data_mdl_mean)), [groundtruth_data_mdl_mean]*len(fitted_data_mdl_mean), color='k', lw=3)
+    ax[model_i].plot(range(len(fitted_data_mdl_mean)), [groundtruth_data_mdl_mean]*len(fitted_data_mdl_mean), color='k', lw=3, label='ground truth')
     ax[model_i].errorbar(range(len(fitted_data_mdl_mean)), [groundtruth_data_mdl_mean]*len(fitted_data_mdl_mean), yerr=np.std(groundtruth_data_mdl), fmt='o', color='k', lw=3, capsize=5)
 
     # Remove top spine
@@ -152,11 +159,20 @@ for model_i in range(n_models):
     
 ax[0].set_xticks(range(len(dataset_sizes)))
 ax[0].set_xticklabels(dataset_sizes)
-ax[0].set_yticks([0, 3])
-ax[0].set_ylim(0, 3)
+ax[0].set_yticks([0, 1])
+ax[0].set_ylim(0, 1)
 ax[0].set_xlim(-1, len(dataset_sizes))
 ax[0].set_ylabel('test data cost\n(bits/syllable)')
+ax[2].legend(loc='upper right', fontsize=12)
 plt.tight_layout()
 plt.savefig(f'{figs_dir}mdl_results.png', dpi=300)
 plt.savefig(f'{figs_dir}mdl_results.pdf', dpi=300)
 plt.close()
+
+
+for model_i in range(n_models):
+    print(f'Model {model_i}')
+    for dataset_size in dataset_sizes:
+        print(f'Dataset size {dataset_size}')
+        for i in range(10):
+            print(models_results[model_i][dataset_size][i]['converged'])

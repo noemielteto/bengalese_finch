@@ -742,7 +742,13 @@ class ProbZip:
 
     def compress_dataset(self, dataset_train, dataset_val, dataset_test, steps=1000, prune_every=1000, log=False, log_every=100):
 
-        results_dict = {'mdl_data_train': [], 'mdl_data_val': [], 'mdl_data_test': [], 'mdl_library': [], 'library_size': [], 'mdl': []}
+        results_dict = {'mdl_data_train': [],
+                        'mdl_data_val': [],
+                        'mdl_data_test': [],
+                        'mdl_library': [],
+                        'library_size': [],
+                        'mdl': [],
+                        'converged': None}
 
         n_train = len(flatten(dataset_train))
         n_val = len(flatten(dataset_val))
@@ -752,13 +758,13 @@ class ProbZip:
         # Important note: We do steps+1 steps to make sure that a final pruning happens at the end
         step = 0
         converged = False
-        while not converged and step<steps+1:
+        while not converged and step<steps:
 
             song = np.random.choice(dataset_train)
 
             # if True:
             # # Burn-in plus later alternation
-            if (step<steps*.2) or (step % 5 == 0):
+            if (step<steps*.2) or (step % 2 == 0):
             # Alternation
             # if (step % 2 == 0):
                 # t = time.time()
@@ -771,17 +777,21 @@ class ProbZip:
                     # t = time.time()
 
                     mdl_1 = self.mdl([song])
-
                     self.remove(symbol)
                     mdl_0 = self.mdl([song])
 
                     if mdl_1 < mdl_0:
                         self.add(symbol)
-                    #     print('Added symbol:', symbol)
-                    # else:
-                    #     print(f'Removed symbol: {symbol}')
-                    # print(f'Checking whether to keep symbol took {time.time()-t} seconds.')             
+                        #     print('Added symbol:', symbol)
+                        # else:
+                        #     print(f'Removed symbol: {symbol}')
+                        # print(f'Checking whether to keep symbol took {time.time()-t} seconds.')
 
+            # After burn-in, set all customer counts to 1
+            elif step == steps*.2:
+                for node in self.library.values():
+                    node.count = 1
+            
             else:
                 # t = time.time()
                 symbols = self.compress_chain(song)
@@ -789,8 +799,6 @@ class ProbZip:
                 # _, symbols = self.compress(song, update_counts=False)
                 # Note: We only remove newly memoized symbols; A more nuanced version will unseat customers but that will be much more costly as it would be done in every single step
                 if len(symbols):
-
-                    t = time.time()
 
                     mdl_1 = self.mdl([song])
 
@@ -802,14 +810,9 @@ class ProbZip:
                     if mdl_1 < mdl_0:
                         for symbol in symbols:
                             self.add(symbol)
-                    #         print('Added symbols:', symbols)
-                    # else:
-                    #     print(f'Removed symbols: {symbols}')
-
-                    # print(f'Checking whether to keep symbols took {time.time()-t} seconds.')
-
+                    
             if (step>steps*.2) and (step % prune_every == 0):
-                self.prune(dataset_val)
+                self.prune(dataset_train)
 
             if log and (step % log_every == 0):
 
@@ -834,7 +837,6 @@ class ProbZip:
                 results_dict['mdl'].append(self.mdl(dataset_val)/n_val)
 
                 print(f'Step {step}: normalized mdl train: {mdl_data_train}, normalized mdl val: {mdl_data_val}, normalized mdl test: {mdl_data_test}, normalized mdl library: {mdl_library}, library size: {library_size}')
-
                 if log:
                     converged = self.converged(results_dict)
             else:
@@ -844,7 +846,7 @@ class ProbZip:
             step += 1
 
         # Final pruning
-        self.prune(dataset_val)
+        self.prune(dataset_train)
 
         # Final MDL computation
         if not log:
@@ -869,34 +871,69 @@ class ProbZip:
 
             results_dict['mdl'].append(self.mdl(dataset_val)/n_val)
 
-        print(f'Converged at step {step}.')
+        if log:
+            results_dict['converged'] = converged
+            print(f'Converged: {converged} after {step} steps.')
+        else:
+            print(f'{steps} steps completed.')
+    
         return results_dict
 
-    def prune(self, dataset_val):
-        # print('Pruning entire library.')
+    def prune(self, dataset):
+        
+        h = int(len(dataset)/2)
+        dataset_1 = dataset[:h]
+        dataset_2 = dataset[h:]
 
-        symbols_removed = True
-        while symbols_removed:
+        for dataset in [dataset_1, dataset_2]:
+            symbols_removed = True
+            while symbols_removed:
 
-            mdl_0 = self.mdl(dataset_val)
-            leaves = self.get_leaves()
-            nonterminal_leaves = [node for node in leaves if node.type=='nonterminal']
-            symbols_to_remove = []
-            for symbol in nonterminal_leaves:
-                self.remove(symbol)
-                mdl_1 = self.mdl(dataset_val)
+                mdl_0 = self.mdl(dataset)
+                leaves = self.get_leaves()
+                nonterminal_leaves = [node for node in leaves if node.type=='nonterminal']
+                symbols_to_remove = []
+                for symbol in nonterminal_leaves:
+                    self.remove(symbol)
+                    mdl_1 = self.mdl(dataset)
 
-                if mdl_1 < mdl_0:
-                    symbols_to_remove.append(symbol)
-                
-                self.add(symbol)
+                    if mdl_1 < mdl_0:
+                        symbols_to_remove.append(symbol)
+                    
+                    self.add(symbol)
 
-            # print(f'Removing symbols: {symbols_to_remove}')
-            for symbol in symbols_to_remove:
-                self.remove(symbol)
-            symbols_removed = len(symbols_to_remove)
+                # print(f'Removing symbols: {symbols_to_remove}')
+                for symbol in symbols_to_remove:
+                    self.remove(symbol)
+                symbols_removed = len(symbols_to_remove)
 
-        # print('Finished pruning library.')
+    def unseat(self, dataset):
+        
+        symbols_to_unseat = []
+        symbols_to_remove = []
+        for _, symbol in self.library.items():
+
+            # Terminal symbols are unremovable and have a nonzero probability
+            if symbol.type == 'terminal' and symbol.count == 1:
+                continue
+
+            mdl_0 = self.mdl(dataset)
+            symbol.count -= 1
+            mdl_1 = self.mdl(dataset)
+            symbol.count += 1
+
+            if mdl_1 < mdl_0:
+                symbols_to_unseat.append(symbol)
+            
+        for symbol in symbols_to_unseat:
+            symbol.count -= 1
+
+            if symbol.count == 0:
+                # Nonterminals are removed when count is zero
+                symbols_to_remove.append(symbol)
+        
+        for symbol in symbols_to_remove:
+            self.remove(symbol)
 
     def converged(self, results_dict, threshold=0.01):
         """
@@ -958,7 +995,10 @@ class ProbZip:
 
     def mdl(self, dataset):
         
-        return - self.get_dataset_ll(dataset) + self.get_entropy()
+        mdl = - self.get_dataset_ll(dataset) + self.get_entropy()
+        # n_char = len(flatten(dataset))
+        # return mdl/n_char
+        return mdl
 
     def write_to_txt(self, file_path):
 
@@ -1034,7 +1074,6 @@ class ProbZip:
             plt.close('all')
         else:
             plt.show()
-
 
 def tree_layout(G, root, width=1.0, vert_gap=0.2, vert_loc=0, xcenter=0.5, pos=None, parent=None):
     """
