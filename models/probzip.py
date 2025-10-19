@@ -445,10 +445,11 @@ class Node:
 
 class ProbZip:
 
-    def __init__(self, alpha):
+    def __init__(self, alpha, regular_grammar=False):
         self.alpha                  = alpha
         self.epsilon                = Node(alpha=alpha)
         self.library                = {'': self.epsilon}
+        self.regular_grammar       = regular_grammar
 
     def __repr__(self):
 
@@ -519,7 +520,11 @@ class ProbZip:
                 suffix = None
                 i += len(parent.flat_expression) * observed_repeat
             else:
-                suffix, i = self.epsilon.infer(data, i)
+                if self.regular_grammar:
+                    suffix = data[i]
+                    i += 1
+                else:
+                    suffix, i = self.epsilon.infer(data, i)
                 rate = None
             
             expression = get_expression(parent=parent, suffix=suffix, rate=rate)
@@ -589,7 +594,11 @@ class ProbZip:
                 suffix = None
                 i += len(parent.flat_expression) * observed_repeat
             else:
-                suffix, i = self.epsilon.infer(data, i)
+                if self.regular_grammar:
+                    suffix = data[i]
+                    i += 1
+                else:
+                    suffix, i = self.epsilon.infer(data, i)
                 rate = None
             
             # print(f'Parent: {parent}, Suffix: {suffix}, Rate: {rate}')
