@@ -540,14 +540,7 @@ class ProbZip:
                 norm = parent.alpha + child.count
                 prob_stay = parent.alpha/norm
 
-                # Note: Here we wanted to prevent the creation of overlapping nonterminals here: if its parent
-                # or affix is already in the library, we don't memoize it. If its suffix is parent
-                # in the library, we don't memoize it. But this is buggy: repeats are self-overlapping by definition.
-                # Rewrite the func to not include repeats or omit this and delete later as it's a hack anyways.
-                # if np.random.random() > prob_stay and not len(self.get_nonterminal_overlaps(child)) and child.order<7:
-
-                if True:
-                # if np.random.random() > prob_stay:
+                if np.random.random() > prob_stay:
 
                     # We only memoize non-reduntant expressions
                     if child.flat_expression not in [node.flat_expression for node in self.library.values()]:
@@ -620,14 +613,7 @@ class ProbZip:
                 norm = parent.alpha + child.count
                 prob_stay = parent.alpha/norm
 
-                # Note: Here we wanted to prevent the creation of overlapping nonterminals here: if its parent
-                # or affix is already in the library, we don't memoize it. If its suffix is parent
-                # in the library, we don't memoize it. But this is buggy: repeats are self-overlapping by definition.
-                # Rewrite the func to not include repeats or omit this and delete later as it's a hack anyways.
-                # if np.random.random() > prob_stay and not len(self.get_nonterminal_overlaps(child)) and child.order<7:
-
-                if True:
-                # if np.random.random() > prob_stay:
+                if np.random.random() > prob_stay:
 
                     # We only memoize non-reduntant expressions
                     if child.flat_expression not in [node.flat_expression for node in self.library.values()]:
